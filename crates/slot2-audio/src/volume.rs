@@ -11,7 +11,8 @@ pub const STEP: u8 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Volume {
-    _todo: (),
+    level: u8,
+    muted: bool,
 }
 
 impl Default for Volume {
@@ -22,51 +23,66 @@ impl Default for Volume {
 
 impl Volume {
     pub fn new(level: u8) -> Volume {
-        let _ = level;
-        todo!("task 08")
+        Volume {
+            level: level.min(100),
+            muted: false,
+        }
     }
 
     /// 0..=100, as shown to the user. Unchanged by muting.
     pub fn level(&self) -> u8 {
-        todo!("task 08")
+        self.level
     }
 
     pub fn set_level(&mut self, level: u8) {
-        let _ = level;
-        todo!("task 08")
+        self.level = level.min(100);
     }
 
     pub fn is_muted(&self) -> bool {
-        todo!("task 08")
+        self.muted
     }
 
     /// Mute (keeping the level) or unmute back to it.
     pub fn set_muted(&mut self, muted: bool) {
-        let _ = muted;
-        todo!("task 08")
+        self.muted = muted;
     }
 
     pub fn toggle_mute(&mut self) {
-        let m = self.is_muted();
-        self.set_muted(!m);
+        self.muted = !self.muted;
     }
 
     pub fn step_up(&mut self) {
-        todo!("task 08")
+        self.muted = false;
+        self.level = self.level.saturating_add(STEP).min(100);
     }
 
     pub fn step_down(&mut self) {
-        todo!("task 08")
+        self.level = self.level.saturating_sub(STEP);
     }
 
     /// The multiplier actually applied: 0.0 when muted, `(level/100)^2` otherwise.
     pub fn gain(&self) -> f32 {
-        todo!("task 08")
+        if self.muted {
+            0.0
+        } else {
+            let ratio = self.level as f32 / 100.0;
+            ratio * ratio
+        }
     }
 
     /// Scale a buffer in place.
     pub fn apply(&self, samples: &mut [i16]) {
-        let _ = samples;
-        todo!("task 08")
+        let g = self.gain();
+        if g == 1.0 {
+            return;
+        }
+        if g == 0.0 {
+            samples.fill(0);
+            return;
+        }
+        for s in samples {
+            let val = *s as f32 * g;
+            *s = val.clamp(i16::MIN as f32, i16::MAX as f32).round() as i16;
+        }
     }
 }

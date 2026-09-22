@@ -13,7 +13,10 @@ fn ring_round_trips_and_reports_space() {
     let ring = Ring::new(64);
     let cap = ring.capacity();
     assert!(cap >= 64 * CHANNELS, "capacity {cap}");
-    assert!(cap.is_power_of_two(), "capacity {cap} should be a power of two");
+    assert!(
+        cap.is_power_of_two(),
+        "capacity {cap} should be a power of two"
+    );
     let (mut p, mut c) = ring.split();
     assert_eq!(c.available(), 0);
     assert_eq!(c.frames(), 0);
@@ -34,10 +37,12 @@ fn ring_wraps_around_many_times() {
     let mut next = 0i16;
     let mut expect = 0i16;
     for _ in 0..200 {
-        let batch: Vec<i16> = (0..6).map(|_| {
-            next = next.wrapping_add(1);
-            next
-        }).collect();
+        let batch: Vec<i16> = (0..6)
+            .map(|_| {
+                next = next.wrapping_add(1);
+                next
+            })
+            .collect();
         assert_eq!(p.write(&batch), 6, "space should be free after each read");
         let mut out = [0i16; 6];
         assert_eq!(c.read(&mut out), 6);
@@ -80,10 +85,12 @@ fn producer_and_consumer_work_from_two_threads() {
         let mut written = 0usize;
         let mut v = 0i16;
         while written < total {
-            let batch: Vec<i16> = (0..32).map(|_| {
-                v = v.wrapping_add(1);
-                v
-            }).collect();
+            let batch: Vec<i16> = (0..32)
+                .map(|_| {
+                    v = v.wrapping_add(1);
+                    v
+                })
+                .collect();
             let mut off = 0;
             while off < batch.len() {
                 let n = p.write(&batch[off..]);
@@ -156,7 +163,11 @@ fn a_ramp_stays_a_ramp_and_channels_do_not_swap() {
     }
     // Left rises monotonically (interpolation, never a jump backwards).
     for f in 1..frames {
-        assert!(out[f * 2] >= out[(f - 1) * 2], "frame {f}: {:?}", &out[..frames * 2]);
+        assert!(
+            out[f * 2] >= out[(f - 1) * 2],
+            "frame {f}: {:?}",
+            &out[..frames * 2]
+        );
     }
 }
 
@@ -171,7 +182,10 @@ fn successive_calls_do_not_click_or_drift() {
     }
     let ideal = (546.0 * 100.0 * DEVICE_RATE as f64 / 32_768.0) as usize;
     let drift = (total as i64 - ideal as i64).abs();
-    assert!(drift <= 3, "drift {drift} frames over 100 calls (total {total}, ideal {ideal})");
+    assert!(
+        drift <= 3,
+        "drift {drift} frames over 100 calls (total {total}, ideal {ideal})"
+    );
 }
 
 #[test]
@@ -197,7 +211,10 @@ fn volume_is_perceptual_and_mute_remembers() {
     assert!((v.gain() - 1.0).abs() < 1e-6);
     v.set_level(50);
     let g = v.gain();
-    assert!((g - 0.25).abs() < 1e-3, "50% should be a quarter of the power: {g}");
+    assert!(
+        (g - 0.25).abs() < 1e-3,
+        "50% should be a quarter of the power: {g}"
+    );
     v.set_muted(true);
     assert!(v.is_muted());
     assert_eq!(v.gain(), 0.0);
@@ -249,7 +266,10 @@ fn volume_scales_samples_and_clamps() {
 #[cfg(feature = "host")]
 #[test]
 fn host_sink_opens_and_plays_when_asked() {
-    if std::env::var("SLOT2_AUDIO_TEST").map(|v| v != "1").unwrap_or(true) {
+    if std::env::var("SLOT2_AUDIO_TEST")
+        .map(|v| v != "1")
+        .unwrap_or(true)
+    {
         eprintln!("SLOT2_AUDIO_TEST not set; skipping the real audio device test");
         return;
     }
