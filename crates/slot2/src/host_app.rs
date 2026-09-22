@@ -25,10 +25,11 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use slot2_audio::Sink as _;
 use slot2_gfx::{GlCanvas, HostEvent, HostSurface, KeyCode};
 use slot2_ui::UiCtx;
 
-use crate::app::{App, Exit};
+use crate::app::{App, Exit, Screen, SinkRequest};
 use crate::Boot;
 
 pub fn run(boot: Boot) {
@@ -53,7 +54,21 @@ pub fn run(boot: Boot) {
         crate::font_dirs(&boot.root),
         Some(&boot.root.join("System/Lang")),
     );
-    let mut app = App::new(std::env::var_os("SLOT2_DEBUG_FRAME").is_some());
+    let card = slot2_store::Card::new(&boot.root);
+    card.ensure_layout();
+    let mut app = App::with_card(
+        card,
+        crate::core_dir(&boot.root),
+        slot2_audio::DEVICE_RATE,
+        std::env::var_os("SLOT2_DEBUG_FRAME").is_some(),
+        Screen::List,
+    );
+    eprintln!(
+        "slot2: {} carts on the {} shelf",
+        app.carts().len(),
+        app.platform().folder()
+    );
+    let mut sink: Option<slot2_audio::HostSink> = None;
 
     loop {
         let began = Instant::now();
@@ -78,6 +93,28 @@ pub fn run(boot: Boot) {
         }
 
         app.tick(began);
+        app.run_frame();
+        match app.take_sink_request() {
+            Some(SinkRequest::Open) => {
+                if let Some(consumer) = app.take_consumer() {
+                    match slot2_audio::HostSink::open(slot2_audio::DEVICE_RATE, 1024, consumer) {
+                        Ok(s) => sink = Some(s),
+                        // A game with no sound beats no game at all.
+                        Err(e) => eprintln!("slot2: {e}; playing silently"),
+                    }
+                }
+            }
+            Some(SinkRequest::Close) => sink = None,
+            None => {}
+        }
+        // A menu over the game silences it; closing the menu brings it back.
+        if let Some(s) = sink.as_mut() {
+            if matches!(app.screen, Screen::Power(_)) {
+                s.pause();
+            } else {
+                s.resume();
+            }
+        }
         if let Some(exit) = app.exit() {
             let action = match exit {
                 Exit::PowerOff => slot2_platform::PowerAction::PowerOff,

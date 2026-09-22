@@ -30,10 +30,11 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use slot2_audio::Sink as _;
 use slot2_gfx::{FbdevSurface, GlCanvas, Surface};
 use slot2_ui::UiCtx;
 
-use crate::app::{App, Exit};
+use crate::app::{App, Exit, Screen, SinkRequest};
 use crate::Boot;
 
 pub fn run(boot: Boot) {
@@ -82,7 +83,21 @@ pub fn run(boot: Boot) {
     ));
     eprintln!("slot2: input: {} evdev devices", source.device_count());
 
-    let mut app = App::new(true);
+    let card = slot2_store::Card::new(&boot.root);
+    card.ensure_layout();
+    let mut app = App::with_card(
+        card,
+        crate::core_dir(&boot.root),
+        slot2_audio::DEVICE_RATE,
+        true,
+        Screen::List,
+    );
+    eprintln!(
+        "slot2: {} carts on the {} shelf",
+        app.carts().len(),
+        app.platform().folder()
+    );
+    let mut sink: Option<slot2_audio::AlsaSink> = None;
     let deadline = Instant::now() + Duration::from_secs(1800);
 
     while Instant::now() < deadline {
@@ -92,6 +107,28 @@ pub fn run(boot: Boot) {
             app.feed(&ev);
         }
         app.tick(began);
+        app.run_frame();
+        match app.take_sink_request() {
+            Some(SinkRequest::Open) => {
+                if let Some(consumer) = app.take_consumer() {
+                    // A game with no sound beats no game at all.
+                    match slot2_audio::AlsaSink::open(slot2_audio::DEVICE_RATE, 1024, consumer) {
+                        Ok(s) => sink = Some(s),
+                        Err(e) => eprintln!("slot2: {e}; playing silently"),
+                    }
+                }
+            }
+            Some(SinkRequest::Close) => sink = None,
+            None => {}
+        }
+        // A menu over the game silences it; closing the menu brings it back.
+        if let Some(s) = sink.as_mut() {
+            if matches!(app.screen, Screen::Power(_)) {
+                s.pause();
+            } else {
+                s.resume();
+            }
+        }
 
         if let Some(exit) = app.exit() {
             let action = match exit {

@@ -21,11 +21,16 @@
 //! `SAFE_W * p`, height 4, colour `splash::INK_DIM`; then, on `Screen::Power`, the menu
 //! over it. Once `exit` is set no further actions change anything.
 
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use slot2_gfx::Canvas;
-use slot2_input::{Action, Event, GestureConfig, Gestures, State};
-use slot2_ui::{PowerMenu, Splash, UiCtx};
+use slot2_input::{Action, Button, Event, GestureConfig, Gestures, State};
+use slot2_retro::LogicalButton;
+use slot2_store::{Card, Cart, Platform};
+use slot2_ui::{GameList, PowerMenu, Splash, UiCtx};
+
+use crate::session::Session;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exit {
@@ -35,8 +40,20 @@ pub enum Exit {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
+    /// Before a card has been scanned, and in the M0 tests.
     Splash,
+    List,
+    Playing,
     Power(PowerMenu),
+}
+
+/// What the app wants the loop to do about audio after the last `feed`/`tick`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SinkRequest {
+    /// A session just started; take its consumer and open a sink.
+    Open,
+    /// The session ended; drop the sink.
+    Close,
 }
 
 pub struct App {
@@ -44,22 +61,96 @@ pub struct App {
     pub state: State,
     pub gestures: Gestures,
     pub splash: Splash,
+    pub list: GameList,
+    pub volume: slot2_audio::Volume,
+    card: Card,
+    core_dir: PathBuf,
+    sink_rate: u32,
+    platform_index: usize,
+    carts: Vec<Cart>,
+    session: Option<Session>,
+    /// Set when a session starts; the loop takes it to build its sink.
+    pending_consumer: Option<slot2_audio::Consumer>,
+    sink_request: Option<SinkRequest>,
     exit: Option<Exit>,
 }
 
 impl App {
+    /// The M0 shape: a splash over an empty card. Kept so the boot path and the older
+    /// tests still work.
     pub fn new(debug_frame: bool) -> Self {
-        App {
-            screen: Screen::Splash,
+        App::with_card(
+            Card::new("."),
+            PathBuf::from("."),
+            48_000,
+            debug_frame,
+            Screen::Splash,
+        )
+    }
+
+    /// The real thing: scan `card` and start on the list.
+    pub fn with_card(
+        card: Card,
+        core_dir: PathBuf,
+        sink_rate: u32,
+        debug_frame: bool,
+        screen: Screen,
+    ) -> Self {
+        let mut app = App {
+            screen,
             state: State::default(),
             gestures: Gestures::new(GestureConfig::default()),
             splash: Splash { debug_frame },
+            list: GameList::default(),
+            volume: slot2_audio::Volume::default(),
+            card,
+            core_dir,
+            sink_rate,
+            platform_index: Platform::ALL
+                .iter()
+                .position(|p| *p == Platform::Gba)
+                .unwrap_or(0),
+            carts: Vec::new(),
+            session: None,
+            pending_consumer: None,
+            sink_request: None,
             exit: None,
+        };
+        if screen == Screen::List {
+            app.rescan();
         }
+        app
     }
 
     pub fn exit(&self) -> Option<Exit> {
         self.exit
+    }
+
+    pub fn platform(&self) -> Platform {
+        Platform::ALL[self.platform_index]
+    }
+
+    pub fn carts(&self) -> &[Cart] {
+        &self.carts
+    }
+
+    pub fn session(&self) -> Option<&Session> {
+        self.session.as_ref()
+    }
+
+    /// The audio consumer of a session that just started, taken once by the loop.
+    pub fn take_consumer(&mut self) -> Option<slot2_audio::Consumer> {
+        self.pending_consumer.take()
+    }
+
+    /// What the loop should do with its sink, taken once.
+    pub fn take_sink_request(&mut self) -> Option<SinkRequest> {
+        self.sink_request.take()
+    }
+
+    pub fn rescan(&mut self) {
+        self.carts = self.card.scan(self.platform());
+        self.list.clamp(self.carts.len());
     }
 
     pub fn feed(&mut self, event: &Event) {
@@ -77,50 +168,156 @@ impl App {
         }
     }
 
+    /// Advance the game, if one is running. Called once per frame by the loop.
+    pub fn run_frame(&mut self) {
+        let held = self.held_game_buttons();
+        let volume = self.volume;
+        if let Some(s) = self.session.as_mut() {
+            s.run_frame(&held, &volume);
+        }
+    }
+
+    /// The game buttons currently down, in the core's terms.
+    fn held_game_buttons(&self) -> Vec<LogicalButton> {
+        self.state.held().into_iter().filter_map(logical).collect()
+    }
+
+    fn start_selected(&mut self) {
+        let Some(cart) = self.carts.get(self.list.selected).cloned() else {
+            return;
+        };
+        match Session::start(&self.card, &cart, &self.core_dir, self.sink_rate) {
+            Ok((session, consumer)) => {
+                eprintln!("slot2: playing {}", cart.title);
+                self.session = Some(session);
+                self.pending_consumer = Some(consumer);
+                self.sink_request = Some(SinkRequest::Open);
+                self.screen = Screen::Playing;
+            }
+            Err(e) => eprintln!("slot2: cannot play {}: {e}", cart.title),
+        }
+    }
+
+    fn stop_session(&mut self) {
+        if let Some(s) = self.session.take() {
+            s.stop(&self.card);
+            self.sink_request = Some(SinkRequest::Close);
+        }
+    }
+
     fn act(&mut self, action: Action) {
         if self.exit.is_some() {
             return;
         }
         match (self.screen, action) {
-            (_, Action::Tap(slot2_input::Button::Power)) => {
+            (_, Action::Tap(Button::Power)) => {
+                self.stop_session();
                 self.exit = Some(Exit::PowerOff);
             }
-            (Screen::Splash, Action::Hold(slot2_input::Button::Menu)) => {
+            (_, Action::Tap(Button::VolUp)) => self.volume.step_up(),
+            (_, Action::Tap(Button::VolDown)) => self.volume.step_down(),
+
+            (Screen::Playing, Action::Hold(Button::Menu)) => {
+                self.stop_session();
+                self.screen = Screen::List;
+                self.rescan();
+            }
+
+            (Screen::List, Action::Hold(Button::Menu))
+            | (Screen::Splash, Action::Hold(Button::Menu)) => {
                 self.screen = Screen::Power(PowerMenu::default());
             }
+            (Screen::List, Action::Tap(b)) => match b {
+                Button::Down => self.list.down(self.carts.len()),
+                Button::Up => self.list.up(),
+                Button::L1 => self.switch_platform(-1),
+                Button::R1 => self.switch_platform(1),
+                Button::A => self.start_selected(),
+                _ => {}
+            },
+
             (Screen::Power(mut menu), Action::Tap(b)) => match b {
-                slot2_input::Button::Up => {
+                Button::Up => {
                     menu.up();
                     self.screen = Screen::Power(menu);
                 }
-                slot2_input::Button::Down => {
+                Button::Down => {
                     menu.down();
                     self.screen = Screen::Power(menu);
                 }
-                slot2_input::Button::A => match menu.choice() {
-                    slot2_ui::PowerChoice::Resume => {
-                        self.screen = Screen::Splash;
-                    }
+                Button::A => match menu.choice() {
+                    slot2_ui::PowerChoice::Resume => self.screen = self.resume_screen(),
                     slot2_ui::PowerChoice::Restart => {
+                        self.stop_session();
                         self.exit = Some(Exit::Reboot);
                     }
                     slot2_ui::PowerChoice::PowerOff => {
+                        self.stop_session();
                         self.exit = Some(Exit::PowerOff);
                     }
                 },
-                slot2_input::Button::B | slot2_input::Button::Menu => {
-                    self.screen = Screen::Splash;
-                }
+                Button::B | Button::Menu => self.screen = self.resume_screen(),
                 _ => {}
             },
             _ => {}
         }
     }
 
-    pub fn draw(&self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, now: Instant) {
-        self.splash.draw(canvas, ctx);
+    /// Where closing the power menu goes back to.
+    fn resume_screen(&self) -> Screen {
+        if self.session.is_some() {
+            Screen::Playing
+        } else if self.carts.is_empty()
+            && self.screen == Screen::Power(PowerMenu::default())
+            && self.card.root() == Path::new(".")
+        {
+            Screen::Splash
+        } else {
+            Screen::List
+        }
+    }
 
-        if let Some(p) = self.gestures.hold_progress(slot2_input::Button::Menu, now) {
+    fn switch_platform(&mut self, delta: isize) {
+        let n = Platform::ALL.len() as isize;
+        self.platform_index = ((self.platform_index as isize + delta).rem_euclid(n)) as usize;
+        self.rescan();
+    }
+
+    pub fn draw(&mut self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, now: Instant) {
+        match self.screen {
+            Screen::Splash => self.splash.draw(canvas, ctx),
+            Screen::List => {
+                let folder = self.platform().folder();
+                // `carts` is borrowed immutably while `list.draw` needs `ctx` mutably; the
+                // list does not touch the app, so a local clone of the slice reference is
+                // enough.
+                let carts = std::mem::take(&mut self.carts);
+                self.list.draw(canvas, ctx, folder, &carts);
+                self.carts = carts;
+            }
+            Screen::Playing => {
+                if let Some(s) = self.session.as_mut() {
+                    s.upload_video(canvas);
+                    s.draw(canvas, ctx);
+                }
+            }
+            Screen::Power(_) => {
+                // Draw whatever is underneath first.
+                if let Some(s) = self.session.as_mut() {
+                    s.upload_video(canvas);
+                    s.draw(canvas, ctx);
+                } else if self.screen != Screen::Splash && !self.carts.is_empty() {
+                    let folder = self.platform().folder();
+                    let carts = std::mem::take(&mut self.carts);
+                    self.list.draw(canvas, ctx, folder, &carts);
+                    self.carts = carts;
+                } else {
+                    self.splash.draw(canvas, ctx);
+                }
+            }
+        }
+
+        if let Some(p) = self.gestures.hold_progress(Button::Menu, now) {
             let x = ctx.safe.px(0.0);
             let y = ctx.safe.py(slot2_ui::SAFE_H as f32 - 4.0);
             let w = slot2_ui::SAFE_W as f32 * p;
@@ -133,6 +330,26 @@ impl App {
     }
 }
 
+/// UI-only buttons (Menu, Power, volume) reach no core.
+fn logical(b: Button) -> Option<LogicalButton> {
+    Some(match b {
+        Button::A => LogicalButton::A,
+        Button::B => LogicalButton::B,
+        Button::X => LogicalButton::X,
+        Button::Y => LogicalButton::Y,
+        Button::L1 => LogicalButton::L1,
+        Button::R1 => LogicalButton::R1,
+        Button::L2 => LogicalButton::L2,
+        Button::R2 => LogicalButton::R2,
+        Button::Select => LogicalButton::Select,
+        Button::Start => LogicalButton::Start,
+        Button::Up => LogicalButton::Up,
+        Button::Down => LogicalButton::Down,
+        Button::Left => LogicalButton::Left,
+        Button::Right => LogicalButton::Right,
+        Button::Menu | Button::Power | Button::VolUp | Button::VolDown => return None,
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;

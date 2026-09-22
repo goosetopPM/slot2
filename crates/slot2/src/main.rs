@@ -60,6 +60,11 @@ pub fn boot() -> Boot {
     }
 }
 
+/// Where the libretro cores live on a card.
+pub fn core_dir(root: &std::path::Path) -> PathBuf {
+    root.join("System").join("cores")
+}
+
 /// Font directories in search order: the card's `System/Fonts`, then the repo's assets
 /// (host only, for `cargo run` from a checkout).
 pub fn font_dirs(root: &std::path::Path) -> Vec<PathBuf> {

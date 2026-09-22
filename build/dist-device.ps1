@@ -61,10 +61,19 @@ if (-not (Test-Path $bin)) { throw "missing $bin (build first)" }
 Step "assembling $out"
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 New-Item -ItemType Directory -Force "$out\System\Fonts" | Out-Null
+New-Item -ItemType Directory -Force "$out\System\cores" | Out-Null
 New-Item -ItemType Directory -Force "$out\System\licenses\fonts" | Out-Null
 Copy-Item $bin "$out\System\frontend"
 Copy-Item assets\fonts\*.otf, assets\fonts\*.ttf "$out\System\Fonts\"
 Copy-Item assets\fonts\*.txt "$out\System\licenses\fonts\"
+$cores = Get-ChildItem vendor\*_libretro.so -ErrorAction SilentlyContinue
+if ($cores) {
+    Copy-Item $cores "$out\System\cores\"
+    Copy-Item vendor\*_libretro.so.meta "$out\System\licenses\" -ErrorAction SilentlyContinue
+    foreach ($c in $cores) { Step ("core: " + $c.Name) }
+} else {
+    Write-Warning "no vendor\*_libretro.so — run build\cores.ps1 first; the card will have no cores"
+}
 
 $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 $sha = (git rev-parse --short HEAD 2>$null)
