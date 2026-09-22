@@ -1,9 +1,16 @@
-﻿[package]
+[package]
 name = "slot2-audio"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "ALSA via dlopen on device, cpal on host, ring buffer, resampling, sfx"
+description = "Ring buffer, resampling, volume, and sinks: ALSA via dlopen on the device, cpal on the host"
+
+[features]
+default = []
+host = ["dep:cpal"]
+device = []
 
 [dependencies]
+libloading = "0.8"
+cpal = { version = "0.15", optional = true }
