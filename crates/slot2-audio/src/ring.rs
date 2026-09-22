@@ -128,6 +128,14 @@ impl Producer {
 
 unsafe impl Send for Producer {}
 
+impl std::fmt::Debug for Producer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Producer")
+            .field("space", &self.space())
+            .finish()
+    }
+}
+
 impl Consumer {
     /// Samples ready to read.
     pub fn available(&self) -> usize {
@@ -179,3 +187,11 @@ impl Consumer {
 }
 
 unsafe impl Send for Consumer {}
+
+impl std::fmt::Debug for Consumer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Consumer")
+            .field("available", &self.available())
+            .finish()
+    }
+}

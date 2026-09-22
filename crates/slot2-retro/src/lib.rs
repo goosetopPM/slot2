@@ -15,8 +15,12 @@
 
 mod ffi;
 mod host;
+pub mod registry;
 
 pub use host::Core;
+pub use registry::{
+    def, joypad_bit, mask_for, Core as CoreId, LogicalButton, Platform, PlatformDef, PLATFORMS,
+};
 
 use std::fmt;
 use std::path::PathBuf;

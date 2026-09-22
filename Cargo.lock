@@ -1829,6 +1829,7 @@ dependencies = [
  "slot2-gfx",
  "slot2-i18n",
  "slot2-platform",
+ "slot2-store",
  "slot2-text",
 ]
 

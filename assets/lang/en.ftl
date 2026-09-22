@@ -34,3 +34,9 @@ power-menu-title = Power
 hint-select = { BTN("a") } select
 hint-back = { BTN("b") } back
 
+
+list-empty = No games in this folder
+hint-play = { BTN("a") } play
+hint-switch = { BTN("l1") }{ BTN("r1") } platform
+hint-back-to-list = Hold { BTN("menu") } to stop
+

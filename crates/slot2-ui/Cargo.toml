@@ -12,6 +12,7 @@ slot2-gfx = { workspace = true, default-features = false }
 slot2-text = { workspace = true }
 slot2-i18n = { workspace = true }
 slot2-platform = { workspace = true }
+slot2-store = { workspace = true }
 
 [dev-dependencies]
 # The screenshot test needs a real window.

@@ -31,3 +31,9 @@ power-menu-title = 전원
 hint-select = { BTN("a") } 선택
 hint-back = { BTN("b") } 뒤로
 
+
+list-empty = 이 폴더에 게임이 없습니다
+hint-play = { BTN("a") } 실행
+hint-switch = { BTN("l1") }{ BTN("r1") } 기종
+hint-back-to-list = { BTN("menu") } 길게 눌러 종료
+

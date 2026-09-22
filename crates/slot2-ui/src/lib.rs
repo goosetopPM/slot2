@@ -13,11 +13,13 @@
 //! - [`Splash`] is the first screen: wordmark, greeting, device line, a hint row.
 
 pub mod face;
+pub mod game_list;
 pub mod layout;
 pub mod power_menu;
 pub mod splash;
 
 pub use face::FaceCache;
+pub use game_list::GameList;
 pub use layout::{SafeArea, SAFE_H, SAFE_W};
 pub use power_menu::{PowerChoice, PowerMenu};
 pub use splash::Splash;
