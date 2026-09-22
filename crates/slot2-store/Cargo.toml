@@ -1,0 +1,9 @@
+﻿[package]
+name = "slot2-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Card layout, scanning, saves and states, settings, atomic writes, migrations"
+
+[dependencies]

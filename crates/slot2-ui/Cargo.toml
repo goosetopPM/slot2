@@ -1,0 +1,9 @@
+﻿[package]
+name = "slot2-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Screens, platform skins, rasterised faces, span layout"
+
+[dependencies]

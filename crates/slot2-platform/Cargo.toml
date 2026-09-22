@@ -1,0 +1,9 @@
+[package]
+name = "slot2-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Device profiles (BASEOS_TARGET → geometry, lid, sticks, sysfs), BaseOS contract, power and network control"
+
+[dependencies]

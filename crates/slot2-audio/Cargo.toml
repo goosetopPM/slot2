@@ -1,0 +1,9 @@
+﻿[package]
+name = "slot2-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ALSA via dlopen on device, cpal on host, ring buffer, resampling, sfx"
+
+[dependencies]

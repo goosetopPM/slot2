@@ -1,0 +1,17 @@
+# build output
+/target
+/target-device
+/dist
+/dist-device
+
+# fetched / built cores and fonts (task core:*)
+/vendor
+
+# a local content root for `cargo run` (roms are the user's, never committed)
+/sdcard
+
+# tool session dirs
+/.gjc
+/.claude/settings.local.json
+
+*.log

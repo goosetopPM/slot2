@@ -1,0 +1,25 @@
+[package]
+name = "slot2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SLOT2 frontend binary: boot, main loop, device and host entry points"
+
+[features]
+# `host` and `device` are mutually exclusive backends. Host is the default so `cargo run`
+# opens a window; the device build turns it off and picks `device` explicitly.
+default = ["host"]
+host = []
+device = []
+
+[dependencies]
+slot2-platform = { workspace = true }
+slot2-gfx = { workspace = true }
+slot2-ui = { workspace = true }
+slot2-i18n = { workspace = true }
+slot2-text = { workspace = true }
+slot2-input = { workspace = true }
+slot2-audio = { workspace = true }
+slot2-retro = { workspace = true }
+slot2-store = { workspace = true }

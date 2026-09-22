@@ -1,0 +1,9 @@
+﻿[package]
+name = "slot2-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Font fallback chain, glyph cache, width measurement"
+
+[dependencies]

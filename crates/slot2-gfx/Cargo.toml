@@ -1,0 +1,9 @@
+﻿[package]
+name = "slot2-gfx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Surface (fbdev EGL on device, glutin on host), compositor, scale policy, shader presets, overlays"
+
+[dependencies]

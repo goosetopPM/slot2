@@ -1,0 +1,9 @@
+﻿[package]
+name = "slot2-input"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "evdev / gilrs+winit to generic button and axis events, gestures"
+
+[dependencies]
