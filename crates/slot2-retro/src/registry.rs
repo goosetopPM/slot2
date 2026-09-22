@@ -127,8 +127,52 @@ pub fn def(platform: Platform) -> &'static PlatformDef {
 /// Y left); libretro's ids follow the SNES layout. For the Game Boy family only A and B
 /// exist; for the Mega Drive, the frontend's Y/X/A row maps to the core's A/B/C.
 pub fn joypad_bit(platform: Platform, button: LogicalButton) -> Option<u16> {
-    let _ = (platform, button);
-    todo!("task 09")
+    use JoypadMask as M;
+    use LogicalButton as B;
+
+    match (platform, button) {
+        (_, B::Up) => Some(M::UP),
+        (_, B::Down) => Some(M::DOWN),
+        (_, B::Left) => Some(M::LEFT),
+        (_, B::Right) => Some(M::RIGHT),
+        (_, B::Start) => Some(M::START),
+
+        (
+            Platform::Gb | Platform::Gbc | Platform::Gba | Platform::Nes | Platform::Snes,
+            B::Select,
+        ) => Some(M::SELECT),
+
+        (
+            Platform::Gb
+            | Platform::Gbc
+            | Platform::Gba
+            | Platform::Nes
+            | Platform::Snes
+            | Platform::Sms,
+            B::A,
+        ) => Some(M::A),
+        (
+            Platform::Gb
+            | Platform::Gbc
+            | Platform::Gba
+            | Platform::Nes
+            | Platform::Snes
+            | Platform::Sms,
+            B::B,
+        ) => Some(M::B),
+
+        (Platform::Snes, B::X) => Some(M::X),
+        (Platform::Snes, B::Y) => Some(M::Y),
+
+        (Platform::Gba | Platform::Snes, B::L1) => Some(M::L),
+        (Platform::Gba | Platform::Snes, B::R1) => Some(M::R),
+
+        (Platform::Md, B::Y) => Some(M::Y), // MD A
+        (Platform::Md, B::X) => Some(M::B), // MD B
+        (Platform::Md, B::A) => Some(M::A), // MD C
+
+        _ => None,
+    }
 }
 
 /// The buttons the frontend can send to a core. Mirrors `slot2_input::Button`'s game

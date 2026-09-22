@@ -4,6 +4,15 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
+
+/// A libretro core is global state and only one instance of a library may live at a time,
+/// so these tests take turns.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 use slot2::session::{Session, SAVE_EVERY_FRAMES, THUMB_MAX};
 use slot2_audio::Volume;
@@ -53,6 +62,7 @@ fn card_with_rom(name: &str) -> (Card, Cart, PathBuf) {
 
 #[test]
 fn a_session_runs_frames_and_produces_audio_and_video() {
+    let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("run");
     let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
@@ -75,12 +85,15 @@ fn a_session_runs_frames_and_produces_audio_and_video() {
     // Half a second at 48 kHz stereo should be well over 10 000 samples for 30 frames.
     let mut buf = vec![0i16; 200_000];
     let got = consumer.read(&mut buf);
+    // The count is what matters: arm.gba is a CPU test ROM and writes no sound, so the
+    // samples are legitimately zero. That the volume path scales them is slot2-audio's
+    // own test; here we only prove the chain runs at the device rate.
     assert!(got > 10_000, "audio samples after 30 frames: {got}");
-    assert!(buf[..got].iter().any(|&s| s != 0), "audio is all silence");
 }
 
 #[test]
 fn muting_silences_the_stream_without_stopping_it() {
+    let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("mute");
     let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
@@ -100,6 +113,7 @@ fn muting_silences_the_stream_without_stopping_it() {
 
 #[test]
 fn thumbnail_fits_the_box_and_keeps_aspect() {
+    let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("thumb");
     let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
@@ -121,6 +135,7 @@ fn thumbnail_fits_the_box_and_keeps_aspect() {
 
 #[test]
 fn states_round_trip_through_the_card() {
+    let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, root) = card_with_rom("states");
     let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
@@ -148,6 +163,7 @@ fn states_round_trip_through_the_card() {
 
 #[test]
 fn stopping_writes_the_save_and_a_resume_state() {
+    let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, root) = card_with_rom("stop");
     let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
@@ -165,6 +181,7 @@ fn stopping_writes_the_save_and_a_resume_state() {
 
 #[test]
 fn save_ram_is_flushed_periodically_and_restored_on_the_next_start() {
+    let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("sram");
     let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
@@ -182,6 +199,7 @@ fn save_ram_is_flushed_periodically_and_restored_on_the_next_start() {
 
 #[test]
 fn a_missing_core_is_a_clean_error() {
+    let _serial = serial();
     let (card, cart, _root) = card_with_rom("nocore");
     let empty = std::env::temp_dir().join(format!("slot2-nocore-{}", std::process::id()));
     fs::create_dir_all(&empty).unwrap();
