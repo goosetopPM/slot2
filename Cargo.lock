@@ -1517,6 +1517,13 @@ dependencies = [
 [[package]]
 name = "slot2-ui"
 version = "0.1.0"
+dependencies = [
+ "png",
+ "slot2-gfx",
+ "slot2-i18n",
+ "slot2-platform",
+ "slot2-text",
+]
 
 [[package]]
 name = "smallvec"

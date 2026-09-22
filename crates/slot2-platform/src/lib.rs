@@ -9,4 +9,4 @@
 
 pub mod profile;
 
-pub use profile::{detect, Geometry, Profile};
+pub use profile::{by_target, detect, Detected, Geometry, Profile, PROFILES};

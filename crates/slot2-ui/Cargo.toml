@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "slot2-ui"
 version.workspace = true
 edition.workspace = true
@@ -7,3 +7,13 @@ license.workspace = true
 description = "Screens, platform skins, rasterised faces, span layout"
 
 [dependencies]
+# Only the Canvas trait and types; no window or GL backend is pulled in here.
+slot2-gfx = { workspace = true, default-features = false }
+slot2-text = { workspace = true }
+slot2-i18n = { workspace = true }
+slot2-platform = { workspace = true }
+
+[dev-dependencies]
+# The screenshot test needs a real window.
+slot2-gfx = { workspace = true, features = ["host"] }
+png = "0.17"

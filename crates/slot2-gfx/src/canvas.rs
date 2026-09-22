@@ -35,6 +35,16 @@ impl Color {
         Color { r, g, b, a }
     }
 
+    /// From 8-bit channels, opaque. `const`, for palette constants.
+    pub const fn from_rgb8(r: u8, g: u8, b: u8) -> Color {
+        Color {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: 1.0,
+        }
+    }
+
     /// From 8-bit channels.
     pub fn from_u8(r: u8, g: u8, b: u8, a: u8) -> Color {
         Color {
