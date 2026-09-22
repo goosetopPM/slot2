@@ -14,10 +14,12 @@
 
 pub mod face;
 pub mod layout;
+pub mod power_menu;
 pub mod splash;
 
 pub use face::FaceCache;
 pub use layout::{SafeArea, SAFE_H, SAFE_W};
+pub use power_menu::{PowerChoice, PowerMenu};
 pub use splash::Splash;
 
 use std::path::{Path, PathBuf};

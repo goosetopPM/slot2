@@ -10,7 +10,7 @@ description = "SLOT2 frontend binary: boot, main loop, device and host entry poi
 # `host` and `device` are mutually exclusive backends. Host is the default so `cargo run`
 # opens a window; the device build turns it off and picks `device` explicitly.
 default = ["host"]
-host = ["slot2-gfx/host"]
+host = ["slot2-gfx/host", "slot2-input/host"]
 device = ["slot2-gfx/device"]
 
 [dependencies]

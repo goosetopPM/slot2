@@ -29,3 +29,8 @@ states-count = { $n ->
 power-off = Power off
 power-restart = Restart
 resume = Resume
+
+power-menu-title = Power
+hint-select = { BTN("a") } select
+hint-back = { BTN("b") } back
+

@@ -7,6 +7,8 @@
 //! `SLOT2_GEOMETRY` overrides the panel, which is how one PC window stands in for three
 //! device shapes.
 
+pub mod power;
 pub mod profile;
 
+pub use power::PowerAction;
 pub use profile::{by_target, detect, Detected, Geometry, Profile, PROFILES};

@@ -26,3 +26,8 @@ states-count = 세이브 스테이트 { $n }개
 power-off = 전원 끄기
 power-restart = 다시 시작
 resume = 계속하기
+
+power-menu-title = 전원
+hint-select = { BTN("a") } 선택
+hint-back = { BTN("b") } 뒤로
+

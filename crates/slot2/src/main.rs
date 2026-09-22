@@ -1,6 +1,7 @@
 //! M0: identify the device, bring up a surface, draw the splash, idle. On the device the
 //! first boot also dumps a hardware survey (`diag`) for the design doc's V-list.
 
+mod app;
 #[cfg(feature = "device")]
 mod device_app;
 mod diag;

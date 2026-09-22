@@ -1488,12 +1488,16 @@ name = "slot2-i18n"
 version = "0.1.0"
 dependencies = [
  "fluent-bundle",
+ "slot2-input",
  "unic-langid",
 ]
 
 [[package]]
 name = "slot2-input"
 version = "0.1.0"
+dependencies = [
+ "winit",
+]
 
 [[package]]
 name = "slot2-platform"
