@@ -15,3 +15,7 @@
 /.claude/settings.local.json
 
 *.log
+
+# free-gjc run logs
+/.gjc-logs
+
