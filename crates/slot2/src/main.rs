@@ -1,9 +1,9 @@
 //! M0: identify the device, bring up a surface, draw the splash, idle. On the device the
 //! first boot also dumps a hardware survey (`diag`) for the design doc's V-list.
 
-mod diag;
 #[cfg(feature = "device")]
 mod device_app;
+mod diag;
 #[cfg(feature = "host")]
 mod host_app;
 
@@ -25,7 +25,11 @@ pub struct Boot {
 pub fn boot() -> Boot {
     let detected = slot2_platform::detect();
     let p = detected.profile;
-    let backend = if cfg!(feature = "device") { "device" } else { "host" };
+    let backend = if cfg!(feature = "device") {
+        "device"
+    } else {
+        "host"
+    };
     let root = if cfg!(feature = "device") {
         std::env::current_dir()
             .ok()
@@ -48,7 +52,11 @@ pub fn boot() -> Boot {
         detected.source,
         root.display(),
     );
-    Boot { detected, root, lang }
+    Boot {
+        detected,
+        root,
+        lang,
+    }
 }
 
 /// Font directories in search order: the card's `System/Fonts`, then the repo's assets

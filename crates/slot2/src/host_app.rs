@@ -22,9 +22,64 @@
 //! Any `Err` from open/new/present is printed as `slot2: <err>` and ends the program;
 //! there is nothing to recover to on a desktop.
 
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
+use slot2_gfx::{GlCanvas, HostEvent, HostSurface, KeyCode};
+use slot2_ui::{Splash, UiCtx};
+
 use crate::Boot;
 
 pub fn run(boot: Boot) {
-    let _ = boot;
-    todo!("task 04")
+    let panel = boot.detected.profile.geometry.size();
+    let mut surface = match HostSurface::open("SLOT2", panel, 2) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("slot2: {e}");
+            return;
+        }
+    };
+    let mut canvas = match GlCanvas::new(&mut surface, panel) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("slot2: {e}");
+            return;
+        }
+    };
+    let mut ctx = UiCtx::new(
+        boot.detected.profile,
+        &boot.lang,
+        crate::font_dirs(&boot.root),
+        Some(&boot.root.join("System/Lang")),
+    );
+    let splash = Splash {
+        debug_frame: std::env::var_os("SLOT2_DEBUG_FRAME").is_some(),
+    };
+
+    loop {
+        let began = Instant::now();
+        for ev in surface.pump() {
+            match ev {
+                HostEvent::CloseRequested => return,
+                HostEvent::Key {
+                    code: KeyCode::Escape,
+                    pressed: true,
+                } => return,
+                _ => {}
+            }
+        }
+
+        splash.draw(&mut canvas, &mut ctx);
+
+        if let Err(e) = canvas.present(&mut surface) {
+            eprintln!("slot2: {e}");
+            return;
+        }
+
+        let elapsed = began.elapsed();
+        let frame_time = Duration::from_secs_f64(1.0 / 60.0);
+        if elapsed < frame_time {
+            sleep(frame_time - elapsed);
+        }
+    }
 }

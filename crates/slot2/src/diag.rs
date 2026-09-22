@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
+#[allow(dead_code)]
 pub fn report(root: &Path) -> String {
     let mut out = String::new();
     let mut section = |title: &str, body: String| {
@@ -133,10 +134,12 @@ pub fn report(root: &Path) -> String {
     out
 }
 
+#[allow(dead_code)]
 fn read(p: &str) -> String {
     std::fs::read_to_string(p).unwrap_or_else(|e| format!("<{e}>"))
 }
 
+#[allow(dead_code)]
 fn ls(p: &str) -> String {
     match std::fs::read_dir(p) {
         Ok(rd) => {
@@ -151,6 +154,7 @@ fn ls(p: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn grep(text: &str, needles: &[&str]) -> String {
     text.lines()
         .filter(|l| needles.iter().any(|n| l.contains(n)))
@@ -158,6 +162,7 @@ fn grep(text: &str, needles: &[&str]) -> String {
         .join("\n")
 }
 
+#[allow(dead_code)]
 fn run(cmd: &str, args: &[&str]) -> String {
     match Command::new(cmd).args(args).output() {
         Ok(o) => {
@@ -173,6 +178,7 @@ fn run(cmd: &str, args: &[&str]) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn which(tool: &str) -> String {
     for d in ["/usr/sbin", "/usr/bin", "/sbin", "/bin", "/usr/local/bin"] {
         let p = format!("{d}/{tool}");
@@ -183,6 +189,7 @@ fn which(tool: &str) -> String {
     "-".into()
 }
 
+#[allow(dead_code)]
 fn find_lib(name: &str) -> String {
     for d in [
         "/usr/lib",

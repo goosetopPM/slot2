@@ -55,7 +55,12 @@ impl UiCtx {
     /// lazily from the first `font_dirs` entry that contains it (or, if none does, from the
     /// first dir anyway so the miss is logged once at use), the language loaded with
     /// `card_lang_dir` as the override directory.
-    pub fn new(profile: Profile, lang: &str, font_dirs: Vec<PathBuf>, card_lang_dir: Option<&Path>) -> Self {
+    pub fn new(
+        profile: Profile,
+        lang: &str,
+        font_dirs: Vec<PathBuf>,
+        card_lang_dir: Option<&Path>,
+    ) -> Self {
         let mut fonts = FontChain::new();
         // The embedded font cannot fail to parse; if it ever did, text would draw as tofu,
         // which is still a running frontend.
@@ -87,6 +92,14 @@ impl UiCtx {
 /// rounded-looking rect (plain rect is fine in M0) of `color.with_alpha(0.25)` behind the
 /// label drawn in `color`, with `px * 0.4` horizontal padding and `px * 0.3` gaps either
 /// side. Implemented in `face.rs` by task 04.
-pub fn draw_spans(canvas: &mut dyn Canvas, ctx: &mut UiCtx, spans: &[Span], px: f32, x: f32, y: f32, color: Color) -> f32 {
+pub fn draw_spans(
+    canvas: &mut dyn Canvas,
+    ctx: &mut UiCtx,
+    spans: &[Span],
+    px: f32,
+    x: f32,
+    y: f32,
+    color: Color,
+) -> f32 {
     face::draw_spans(canvas, ctx, spans, px, x, y, color)
 }

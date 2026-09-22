@@ -18,7 +18,12 @@ impl SafeArea {
     pub fn for_geometry(g: Geometry) -> Self {
         let (panel_w, panel_h) = g.size();
         let (x, y) = g.safe_area_offset();
-        SafeArea { x, y, panel_w, panel_h }
+        SafeArea {
+            x,
+            y,
+            panel_w,
+            panel_h,
+        }
     }
 
     /// Panel x of a safe-area x.

@@ -37,7 +37,7 @@ pub use fbdev::FbdevSurface;
 #[cfg(feature = "host")]
 mod host;
 #[cfg(feature = "host")]
-pub use host::{HostEvent, HostSurface};
+pub use host::{HostEvent, HostSurface, KeyCode};
 
 use std::ffi::c_void;
 use std::fmt;

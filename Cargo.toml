@@ -11,7 +11,7 @@ repository = "https://github.com/gyuhang/SLOT2"
 
 [workspace.dependencies]
 slot2-platform = { path = "crates/slot2-platform" }
-slot2-gfx = { path = "crates/slot2-gfx" }
+slot2-gfx = { path = "crates/slot2-gfx", default-features = false }
 slot2-ui = { path = "crates/slot2-ui" }
 slot2-i18n = { path = "crates/slot2-i18n" }
 slot2-text = { path = "crates/slot2-text" }
