@@ -6,6 +6,7 @@
 //! in probe mode by accident boots normally the next time.
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -30,8 +31,11 @@ pub fn wanted(root: &Path) -> bool {
 
 /// Read events until the time is up, drawing and logging everything.
 pub fn run(root: &Path, canvas: &mut GlCanvas, surface: &mut dyn Surface, ctx: &mut UiCtx) {
-    // One boot only: take the marker out before anything else can fail.
+    // One boot only: take the marker out before anything else can fail, and make the
+    // removal reach the card — a probe that ends with the power key must not leave the
+    // device probing forever.
     let _ = std::fs::remove_file(root.join(MARKER));
+    sync_all_disks();
 
     let mut source = EvdevSource::open_all(KeyMap::from_pairs(DEFAULT_H700_KEYMAP));
     source.log_raw(true);
@@ -101,14 +105,31 @@ pub fn run(root: &Path, canvas: &mut GlCanvas, surface: &mut dyn Surface, ctx: &
             eprintln!("slot2: {e}");
             break;
         }
-        // Flush as we go: the card may be pulled without a clean shutdown.
-        let _ = std::fs::write(root.join(LOG), &file);
+        // Flush as we go, all the way to the card: a probe usually ends with the power
+        // key, and a vfat write that only reached the page cache is a write that never
+        // happened.
+        save(root, &file);
 
         if let Some(left) = Duration::from_millis(33).checked_sub(frame.elapsed()) {
             sleep(left);
         }
     }
 
-    let _ = std::fs::write(root.join(LOG), &file);
+    save(root, &file);
     eprintln!("slot2: input probe finished, wrote {LOG}");
+}
+
+/// Write the log and push it to the card. `fs::write` alone leaves the bytes in the page
+/// cache, where a power cut loses them.
+fn save(root: &Path, text: &str) {
+    let path = root.join(LOG);
+    if let Ok(mut f) = std::fs::File::create(&path) {
+        let _ = f.write_all(text.as_bytes());
+        let _ = f.sync_all();
+    }
+}
+/// `sync(2)` through the shell: there is no std call for "flush every filesystem", and a
+/// directory change (the marker's removal) is not covered by a file's own `sync_all`.
+fn sync_all_disks() {
+    let _ = std::process::Command::new("sync").status();
 }
