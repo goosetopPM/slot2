@@ -241,35 +241,42 @@ impl GlCanvas {
             let mut vbo = 0;
             gl::GenBuffers(1, &mut vbo);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            // The offscreen texture was rendered with panel y=0 at the GL top, which is the
+            // texture's LAST row (GL textures are bottom-up), so sampling it back onto the
+            // window needs v flipped: v=1 at the top of the quad, v=0 at the bottom. Uploaded
+            // images are the other way round (top row first in memory = row 0 = v=0), which
+            // is why `image_uv` does not flip. `read_back` flips rows on the CPU for the
+            // same reason.
+            let (pw, ph) = (self.panel.0 as f32, self.panel.1 as f32);
             let quad = [
                 Vertex {
                     pos: [0.0, 0.0],
-                    uv: [0.0, 0.0],
-                    col: [1.0; 4],
-                },
-                Vertex {
-                    pos: [self.panel.0 as f32, 0.0],
-                    uv: [1.0, 0.0],
-                    col: [1.0; 4],
-                },
-                Vertex {
-                    pos: [0.0, self.panel.1 as f32],
                     uv: [0.0, 1.0],
                     col: [1.0; 4],
                 },
                 Vertex {
-                    pos: [self.panel.0 as f32, 0.0],
-                    uv: [1.0, 0.0],
-                    col: [1.0; 4],
-                },
-                Vertex {
-                    pos: [self.panel.0 as f32, self.panel.1 as f32],
+                    pos: [pw, 0.0],
                     uv: [1.0, 1.0],
                     col: [1.0; 4],
                 },
                 Vertex {
-                    pos: [0.0, self.panel.1 as f32],
-                    uv: [0.0, 1.0],
+                    pos: [0.0, ph],
+                    uv: [0.0, 0.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [pw, 0.0],
+                    uv: [1.0, 1.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [pw, ph],
+                    uv: [1.0, 0.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [0.0, ph],
+                    uv: [0.0, 0.0],
                     col: [1.0; 4],
                 },
             ];
