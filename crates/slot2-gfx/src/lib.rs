@@ -84,6 +84,11 @@ pub struct Image {
 impl Image {
     pub fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * self.width + x) * 4) as usize;
-        [self.rgba[i], self.rgba[i + 1], self.rgba[i + 2], self.rgba[i + 3]]
+        [
+            self.rgba[i],
+            self.rgba[i + 1],
+            self.rgba[i + 2],
+            self.rgba[i + 3],
+        ]
     }
 }

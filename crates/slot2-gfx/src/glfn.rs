@@ -8,9 +8,29 @@
 //! `C:\Users\gyuha\slot-2\crates\slot-gfx\src\gl.rs`.
 
 use crate::Surface;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static ES: AtomicBool = AtomicBool::new(false);
 
 /// Load every GL entry point from the surface's context. Call after `make_current`.
 pub fn load(surface: &dyn Surface) {
-    let _ = surface;
-    todo!("task 03")
+    gl::load_with(|name| surface.proc_address(name));
+
+    let version = unsafe { gl::GetString(gl::VERSION) };
+    let es = !version.is_null()
+        && unsafe { std::ffi::CStr::from_ptr(version as *const std::ffi::c_char) }
+            .to_string_lossy()
+            .starts_with("OpenGL ES");
+    ES.store(es, Ordering::Relaxed);
+}
+
+pub fn is_es() -> bool {
+    ES.load(Ordering::Relaxed)
+}
+pub fn internal_format() -> gl::types::GLint {
+    if is_es() {
+        gl::RGBA as gl::types::GLint
+    } else {
+        gl::RGBA8 as gl::types::GLint
+    }
 }

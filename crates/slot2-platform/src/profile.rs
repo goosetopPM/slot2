@@ -65,30 +65,91 @@ pub struct Profile {
 
 /// BaseOS's `devices.json`, minus RG28XX. Order does not matter; lookup is by id.
 pub const PROFILES: &[Profile] = &[
-    Profile { target: "rgsp", geometry: Geometry::W720H480, has_lid: true, has_sticks: false },
-    Profile { target: "rg34xx", geometry: Geometry::W720H480, has_lid: false, has_sticks: false },
-    Profile { target: "rg34xxsp", geometry: Geometry::W720H480, has_lid: true, has_sticks: false },
-    Profile { target: "rg35xxsp", geometry: Geometry::W640H480, has_lid: true, has_sticks: false },
-    Profile { target: "rg35xxplus", geometry: Geometry::W640H480, has_lid: false, has_sticks: false },
-    Profile { target: "rg35xxh", geometry: Geometry::W640H480, has_lid: false, has_sticks: true },
-    Profile { target: "rg35xxpro", geometry: Geometry::W640H480, has_lid: false, has_sticks: false },
-    Profile { target: "rg40xxh", geometry: Geometry::W640H480, has_lid: false, has_sticks: true },
-    Profile { target: "rg40xxv", geometry: Geometry::W640H480, has_lid: false, has_sticks: true },
-    Profile { target: "rgcubexx", geometry: Geometry::W720H720, has_lid: false, has_sticks: true },
+    Profile {
+        target: "rgsp",
+        geometry: Geometry::W720H480,
+        has_lid: true,
+        has_sticks: false,
+    },
+    Profile {
+        target: "rg34xx",
+        geometry: Geometry::W720H480,
+        has_lid: false,
+        has_sticks: false,
+    },
+    Profile {
+        target: "rg34xxsp",
+        geometry: Geometry::W720H480,
+        has_lid: true,
+        has_sticks: false,
+    },
+    Profile {
+        target: "rg35xxsp",
+        geometry: Geometry::W640H480,
+        has_lid: true,
+        has_sticks: false,
+    },
+    Profile {
+        target: "rg35xxplus",
+        geometry: Geometry::W640H480,
+        has_lid: false,
+        has_sticks: false,
+    },
+    Profile {
+        target: "rg35xxh",
+        geometry: Geometry::W640H480,
+        has_lid: false,
+        has_sticks: true,
+    },
+    Profile {
+        target: "rg35xxpro",
+        geometry: Geometry::W640H480,
+        has_lid: false,
+        has_sticks: false,
+    },
+    Profile {
+        target: "rg40xxh",
+        geometry: Geometry::W640H480,
+        has_lid: false,
+        has_sticks: true,
+    },
+    Profile {
+        target: "rg40xxv",
+        geometry: Geometry::W640H480,
+        has_lid: false,
+        has_sticks: true,
+    },
+    Profile {
+        target: "rgcubexx",
+        geometry: Geometry::W720H720,
+        has_lid: false,
+        has_sticks: true,
+    },
 ];
 
 /// What an unknown id gets: the most common panel, and nothing that could misfire (a lid
 /// that is not there would never close, but a stick that is not there never moves either —
 /// the conservative choice is simply "no").
-const UNKNOWN: Profile =
-    Profile { target: "unknown", geometry: Geometry::W640H480, has_lid: false, has_sticks: false };
+const UNKNOWN: Profile = Profile {
+    target: "unknown",
+    geometry: Geometry::W640H480,
+    has_lid: false,
+    has_sticks: false,
+};
 
 /// The host's stand-in: the development device's shape unless `SLOT2_GEOMETRY` says otherwise.
-const HOST: Profile =
-    Profile { target: "host", geometry: Geometry::W720H480, has_lid: true, has_sticks: false };
+const HOST: Profile = Profile {
+    target: "host",
+    geometry: Geometry::W720H480,
+    has_lid: true,
+    has_sticks: false,
+};
 
 pub fn by_target(id: &str) -> Option<Profile> {
-    PROFILES.iter().copied().find(|p| p.target.eq_ignore_ascii_case(id))
+    PROFILES
+        .iter()
+        .copied()
+        .find(|p| p.target.eq_ignore_ascii_case(id))
 }
 
 /// Read `BASEOS_TARGET=` out of a baseos-release file's text.
@@ -120,23 +181,42 @@ pub struct Detected {
 
 fn detect_from(env_target: Option<&str>, env_geometry: Option<&str>, release: &Path) -> Detected {
     let mut d = match env_target {
-        Some(id) if id.eq_ignore_ascii_case("host") => {
-            Detected { profile: HOST, source: "env".into() }
-        }
+        Some(id) if id.eq_ignore_ascii_case("host") => Detected {
+            profile: HOST,
+            source: "env".into(),
+        },
         Some(id) => match by_target(id) {
-            Some(p) => Detected { profile: p, source: "env".into() },
-            None => Detected { profile: UNKNOWN, source: format!("unknown({id})") },
+            Some(p) => Detected {
+                profile: p,
+                source: "env".into(),
+            },
+            None => Detected {
+                profile: UNKNOWN,
+                source: format!("unknown({id})"),
+            },
         },
         None => match std::fs::read_to_string(release) {
             Ok(text) => match parse_release(&text) {
                 Some(id) => match by_target(id) {
-                    Some(p) => Detected { profile: p, source: "baseos-release".into() },
-                    None => Detected { profile: UNKNOWN, source: format!("unknown({id})") },
+                    Some(p) => Detected {
+                        profile: p,
+                        source: "baseos-release".into(),
+                    },
+                    None => Detected {
+                        profile: UNKNOWN,
+                        source: format!("unknown({id})"),
+                    },
                 },
-                None => Detected { profile: UNKNOWN, source: "baseos-release(no target)".into() },
+                None => Detected {
+                    profile: UNKNOWN,
+                    source: "baseos-release(no target)".into(),
+                },
             },
             // No release file at all: not BaseOS, so almost certainly a developer's machine.
-            Err(_) => Detected { profile: HOST, source: "host".into() },
+            Err(_) => Detected {
+                profile: HOST,
+                source: "host".into(),
+            },
         },
     };
     if let Some(g) = env_geometry.and_then(Geometry::parse) {
@@ -168,7 +248,10 @@ mod tests {
     #[test]
     fn release_file_is_parsed_loosely() {
         assert_eq!(parse_release("BASEOS_TARGET=rgsp\n"), Some("rgsp"));
-        assert_eq!(parse_release("X=1\n  BASEOS_TARGET=\"rg40xxh\" \n"), Some("rg40xxh"));
+        assert_eq!(
+            parse_release("X=1\n  BASEOS_TARGET=\"rg40xxh\" \n"),
+            Some("rg40xxh")
+        );
         assert_eq!(parse_release("BASEOS_TARGET=\n"), None);
         assert_eq!(parse_release(""), None);
     }

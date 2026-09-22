@@ -14,7 +14,11 @@ const CARD: &str = "/mnt/sdcard";
 fn main() {
     let d = slot2_platform::detect();
     let p = d.profile;
-    let backend = if cfg!(feature = "device") { "device" } else { "host" };
+    let backend = if cfg!(feature = "device") {
+        "device"
+    } else {
+        "host"
+    };
     eprintln!(
         "slot2: {} backend={backend} target={} panel={} safe_area_at={:?} lid={} sticks={} source={}",
         env!("CARGO_PKG_VERSION"),

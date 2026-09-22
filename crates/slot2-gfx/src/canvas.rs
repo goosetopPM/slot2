@@ -20,7 +20,12 @@ pub struct Color {
 impl Color {
     pub const BLACK: Color = Color::rgb(0.0, 0.0, 0.0);
     pub const WHITE: Color = Color::rgb(1.0, 1.0, 1.0);
-    pub const TRANSPARENT: Color = Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
+    pub const TRANSPARENT: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.0,
+    };
 
     pub const fn rgb(r: f32, g: f32, b: f32) -> Color {
         Color { r, g, b, a: 1.0 }
@@ -32,7 +37,12 @@ impl Color {
 
     /// From 8-bit channels.
     pub fn from_u8(r: u8, g: u8, b: u8, a: u8) -> Color {
-        Color { r: r as f32 / 255.0, g: g as f32 / 255.0, b: b as f32 / 255.0, a: a as f32 / 255.0 }
+        Color {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: a as f32 / 255.0,
+        }
     }
 
     pub fn with_alpha(self, a: f32) -> Color {
@@ -73,6 +83,7 @@ pub trait Canvas {
     fn image(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, tint: Color);
 
     /// Part of a texture: `uv` is `[u0, v0, u1, v1]` in 0..=1, `(0, 0)` the top-left texel.
+    #[allow(clippy::too_many_arguments)]
     fn image_uv(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], tint: Color);
 }
 
@@ -80,11 +91,33 @@ pub trait Canvas {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
     Clear(Color),
-    UploadRgba8 { id: TexId, w: u32, h: u32 },
-    UploadAlpha8 { id: TexId, w: u32, h: u32 },
+    UploadRgba8 {
+        id: TexId,
+        w: u32,
+        h: u32,
+    },
+    UploadAlpha8 {
+        id: TexId,
+        w: u32,
+        h: u32,
+    },
     Free(TexId),
-    Rect { x: f32, y: f32, w: f32, h: f32, color: Color },
-    Image { tex: TexId, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], tint: Color },
+    Rect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: Color,
+    },
+    Image {
+        tex: TexId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uv: [f32; 4],
+        tint: Color,
+    },
 }
 
 /// A canvas that remembers what was asked of it. For testing draw code without a GPU.
@@ -97,12 +130,20 @@ pub struct RecordingCanvas {
 
 impl RecordingCanvas {
     pub fn new(w: u32, h: u32) -> Self {
-        RecordingCanvas { size: (w, h), next: 1, ops: Vec::new() }
+        RecordingCanvas {
+            size: (w, h),
+            next: 1,
+            ops: Vec::new(),
+        }
     }
 
     /// Everything drawn since the last `clear`, in order.
     pub fn frame(&self) -> &[Op] {
-        let start = self.ops.iter().rposition(|o| matches!(o, Op::Clear(_))).map_or(0, |i| i + 1);
+        let start = self
+            .ops
+            .iter()
+            .rposition(|o| matches!(o, Op::Clear(_)))
+            .map_or(0, |i| i + 1);
         &self.ops[start..]
     }
 }
@@ -144,8 +185,17 @@ impl Canvas for RecordingCanvas {
         self.image_uv(tex, x, y, w, h, [0.0, 0.0, 1.0, 1.0], tint);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn image_uv(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], tint: Color) {
-        self.ops.push(Op::Image { tex, x, y, w, h, uv, tint });
+        self.ops.push(Op::Image {
+            tex,
+            x,
+            y,
+            w,
+            h,
+            uv,
+            tint,
+        });
     }
 }
 
@@ -174,7 +224,15 @@ mod tests {
         c.image(b, 5.0, 5.0, 1.0, 1.0, Color::WHITE);
         assert_eq!(
             c.frame(),
-            &[Op::Image { tex: b, x: 5.0, y: 5.0, w: 1.0, h: 1.0, uv: [0.0, 0.0, 1.0, 1.0], tint: Color::WHITE }]
+            &[Op::Image {
+                tex: b,
+                x: 5.0,
+                y: 5.0,
+                w: 1.0,
+                h: 1.0,
+                uv: [0.0, 0.0, 1.0, 1.0],
+                tint: Color::WHITE
+            }]
         );
         assert_eq!(c.ops.len(), 7);
     }

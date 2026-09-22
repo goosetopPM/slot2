@@ -34,60 +34,464 @@
 //! - `free(tex)`: `gl::DeleteTextures`. `TexId(0)` is never handed out.
 //! - Every GL call is `unsafe`; keep them inside this module. No `unwrap()` on GL state.
 
-use crate::{Canvas, Color, GfxError, Image, Surface, TexId};
+use crate::{fit, glfn, Canvas, Color, GfxError, Image, Surface, TexId};
+use std::collections::HashMap;
+use std::ffi::CString;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Vertex {
+    pos: [f32; 2],
+    uv: [f32; 2],
+    col: [f32; 4],
+}
 
 pub struct GlCanvas {
-    _todo: (),
+    panel: (u32, u32),
+    fbo: gl::types::GLuint,
+    fbo_tex: gl::types::GLuint,
+    white_tex: TexId,
+    program: gl::types::GLuint,
+    u_panel: gl::types::GLint,
+    vbo: gl::types::GLuint,
+    batch_tex: TexId,
+    vertices: Vec<Vertex>,
+    textures: HashMap<TexId, gl::types::GLuint>,
+    next_tex_id: u32,
 }
 
 impl GlCanvas {
     /// Make the context current, load GL, build the offscreen target and the program.
     pub fn new(surface: &mut dyn Surface, panel: (u32, u32)) -> Result<Self, GfxError> {
-        let _ = (surface, panel);
-        todo!("task 03")
+        surface.make_current()?;
+        glfn::load(surface);
+
+        let fbo_tex = unsafe {
+            let mut tex = 0;
+            gl::GenTextures(1, &mut tex);
+            gl::BindTexture(gl::TEXTURE_2D, tex);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                glfn::internal_format(),
+                panel.0 as i32,
+                panel.1 as i32,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                std::ptr::null(),
+            );
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            tex
+        };
+
+        let fbo = unsafe {
+            let mut fbo = 0;
+            gl::GenFramebuffers(1, &mut fbo);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D,
+                fbo_tex,
+                0,
+            );
+            let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
+            if status != gl::FRAMEBUFFER_COMPLETE {
+                gl::DeleteFramebuffers(1, &fbo);
+                gl::DeleteTextures(1, &fbo_tex);
+                return Err(GfxError::Framebuffer(status));
+            }
+            fbo
+        };
+
+        let program = {
+            let vs = shader(
+                gl::VERTEX_SHADER,
+                "
+                attribute vec2 a_pos;
+                attribute vec2 a_uv;
+                attribute vec4 a_col;
+                uniform vec2 u_panel;
+                varying vec2 v_uv;
+                varying vec4 v_col;
+                void main() {
+                    v_uv = a_uv;
+                    v_col = a_col;
+                    vec2 clip = (a_pos / u_panel) * 2.0 - 1.0;
+                    gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+                }
+            ",
+            )?;
+            let fs = shader(
+                gl::FRAGMENT_SHADER,
+                "
+                #ifdef GL_ES
+                precision mediump float;
+                #endif
+                varying vec2 v_uv;
+                varying vec4 v_col;
+                uniform sampler2D u_tex;
+                void main() {
+                    gl_FragColor = texture2D(u_tex, v_uv) * v_col;
+                }
+            ",
+            )?;
+            let p = unsafe { gl::CreateProgram() };
+            unsafe {
+                gl::AttachShader(p, vs);
+                gl::AttachShader(p, fs);
+                gl::BindAttribLocation(p, 0, CString::new("a_pos").unwrap().as_ptr());
+                gl::BindAttribLocation(p, 1, CString::new("a_uv").unwrap().as_ptr());
+                gl::BindAttribLocation(p, 2, CString::new("a_col").unwrap().as_ptr());
+                gl::LinkProgram(p);
+                gl::DeleteShader(vs);
+                gl::DeleteShader(fs);
+                let mut ok = 0;
+                gl::GetProgramiv(p, gl::LINK_STATUS, &mut ok);
+                if ok == 0 {
+                    return Err(GfxError::Shader(info_log(
+                        p,
+                        gl::GetProgramiv,
+                        gl::GetProgramInfoLog,
+                    )));
+                }
+            }
+            p
+        };
+
+        let u_panel = unsafe {
+            gl::UseProgram(program);
+            gl::Uniform1i(
+                gl::GetUniformLocation(program, CString::new("u_tex").unwrap().as_ptr()),
+                0,
+            );
+            gl::GetUniformLocation(program, CString::new("u_panel").unwrap().as_ptr())
+        };
+
+        let vbo = unsafe {
+            let mut vbo = 0;
+            gl::GenBuffers(1, &mut vbo);
+            vbo
+        };
+
+        let mut canvas = GlCanvas {
+            panel,
+            fbo,
+            fbo_tex,
+            white_tex: TexId(0),
+            program,
+            u_panel,
+            vbo,
+            batch_tex: TexId(0),
+            vertices: Vec::with_capacity(600),
+            textures: HashMap::new(),
+            next_tex_id: 1,
+        };
+
+        canvas.white_tex = canvas.upload_rgba8(1, 1, &[255, 255, 255, 255]);
+        canvas.batch_tex = canvas.white_tex;
+
+        Ok(canvas)
+    }
+
+    fn flush(&mut self) {
+        if self.vertices.is_empty() {
+            return;
+        }
+        let tex = *self.textures.get(&self.batch_tex).unwrap_or(&0);
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, tex);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (self.vertices.len() * std::mem::size_of::<Vertex>()) as isize,
+                self.vertices.as_ptr() as *const _,
+                gl::STREAM_DRAW,
+            );
+            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 32, std::ptr::null());
+            gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, 32, 8 as *const _);
+            gl::VertexAttribPointer(2, 4, gl::FLOAT, gl::FALSE, 32, 16 as *const _);
+            gl::EnableVertexAttribArray(0);
+            gl::EnableVertexAttribArray(1);
+            gl::EnableVertexAttribArray(2);
+            gl::DrawArrays(gl::TRIANGLES, 0, self.vertices.len() as i32);
+        }
+        self.vertices.clear();
     }
 
     /// Flush this frame to the surface: letterboxed/scaled blit of the panel, then swap.
     pub fn present(&mut self, surface: &mut dyn Surface) -> Result<(), GfxError> {
-        let _ = surface;
-        todo!("task 03")
+        self.flush();
+        let rect = fit::integer_fit_rect(self.panel, surface.size());
+        unsafe {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            gl::Viewport(0, 0, surface.size().0 as i32, surface.size().1 as i32);
+            gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+
+            gl::Viewport(rect.x, rect.y, rect.w, rect.h);
+            gl::UseProgram(self.program);
+            gl::Uniform2f(self.u_panel, self.panel.0 as f32, self.panel.1 as f32);
+            gl::Disable(gl::BLEND);
+
+            let mut vbo = 0;
+            gl::GenBuffers(1, &mut vbo);
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            let quad = [
+                Vertex {
+                    pos: [0.0, 0.0],
+                    uv: [0.0, 0.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [self.panel.0 as f32, 0.0],
+                    uv: [1.0, 0.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [0.0, self.panel.1 as f32],
+                    uv: [0.0, 1.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [self.panel.0 as f32, 0.0],
+                    uv: [1.0, 0.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [self.panel.0 as f32, self.panel.1 as f32],
+                    uv: [1.0, 1.0],
+                    col: [1.0; 4],
+                },
+                Vertex {
+                    pos: [0.0, self.panel.1 as f32],
+                    uv: [0.0, 1.0],
+                    col: [1.0; 4],
+                },
+            ];
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (6 * 32) as isize,
+                quad.as_ptr() as *const _,
+                gl::STREAM_DRAW,
+            );
+            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 32, std::ptr::null());
+            gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, 32, 8 as *const _);
+            gl::VertexAttribPointer(2, 4, gl::FLOAT, gl::FALSE, 32, 16 as *const _);
+            gl::EnableVertexAttribArray(0);
+            gl::EnableVertexAttribArray(1);
+            gl::EnableVertexAttribArray(2);
+            gl::BindTexture(gl::TEXTURE_2D, self.fbo_tex);
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
+            gl::DeleteBuffers(1, &vbo);
+
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
+            gl::Viewport(0, 0, self.panel.0 as i32, self.panel.1 as i32);
+        }
+        surface.swap()?;
+        Ok(())
     }
 
     /// The panel as drawn so far this frame (everything since `clear`), top row first.
     pub fn read_back(&mut self) -> Image {
-        todo!("task 03")
+        self.flush();
+        let stride = self.panel.0 as usize * 4;
+        let mut buf = vec![0u8; stride * self.panel.1 as usize];
+        unsafe {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
+            gl::PixelStorei(gl::PACK_ALIGNMENT, 1);
+            gl::ReadPixels(
+                0,
+                0,
+                self.panel.0 as i32,
+                self.panel.1 as i32,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                buf.as_mut_ptr() as *mut _,
+            );
+        }
+        let mut flipped = Vec::with_capacity(buf.len());
+        for row in buf.chunks_exact(stride).rev() {
+            flipped.extend_from_slice(row);
+        }
+        Image {
+            width: self.panel.0,
+            height: self.panel.1,
+            rgba: flipped,
+        }
     }
 }
 
 impl Canvas for GlCanvas {
     fn size(&self) -> (u32, u32) {
-        todo!("task 03")
+        self.panel
     }
     fn clear(&mut self, color: Color) {
-        let _ = color;
-        todo!("task 03")
+        self.flush();
+        unsafe {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
+            gl::ClearColor(color.r, color.g, color.b, color.a);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
     }
     fn upload_rgba8(&mut self, w: u32, h: u32, data: &[u8]) -> TexId {
-        let _ = (w, h, data);
-        todo!("task 03")
+        let id = TexId(self.next_tex_id);
+        self.next_tex_id += 1;
+        let mut tex = 0;
+        unsafe {
+            gl::GenTextures(1, &mut tex);
+            gl::BindTexture(gl::TEXTURE_2D, tex);
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                glfn::internal_format(),
+                w as i32,
+                h as i32,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                data.as_ptr() as *const _,
+            );
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        }
+        self.textures.insert(id, tex);
+        id
     }
     fn upload_alpha8(&mut self, w: u32, h: u32, data: &[u8]) -> TexId {
-        let _ = (w, h, data);
-        todo!("task 03")
+        let mut rgba = Vec::with_capacity(data.len() * 4);
+        for &a in data {
+            rgba.push(255);
+            rgba.push(255);
+            rgba.push(255);
+            rgba.push(a);
+        }
+        self.upload_rgba8(w, h, &rgba)
     }
     fn free(&mut self, tex: TexId) {
-        let _ = tex;
-        todo!("task 03")
+        if let Some(t) = self.textures.remove(&tex) {
+            if self.batch_tex == tex {
+                self.flush();
+            }
+            unsafe { gl::DeleteTextures(1, &t) };
+        }
     }
     fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
-        let _ = (x, y, w, h, color);
-        todo!("task 03")
+        self.image_uv(self.white_tex, x, y, w, h, [0.0, 0.0, 1.0, 1.0], color);
     }
     fn image(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, tint: Color) {
         self.image_uv(tex, x, y, w, h, [0.0, 0.0, 1.0, 1.0], tint)
     }
+    #[allow(clippy::too_many_arguments)]
     fn image_uv(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], tint: Color) {
-        let _ = (tex, x, y, w, h, uv, tint);
-        todo!("task 03")
+        if tex != self.batch_tex {
+            self.flush();
+            self.batch_tex = tex;
+        }
+        let c = [tint.r, tint.g, tint.b, tint.a];
+        let [u0, v0, u1, v1] = uv;
+        self.vertices.push(Vertex {
+            pos: [x, y],
+            uv: [u0, v0],
+            col: c,
+        });
+        self.vertices.push(Vertex {
+            pos: [x + w, y],
+            uv: [u1, v0],
+            col: c,
+        });
+        self.vertices.push(Vertex {
+            pos: [x, y + h],
+            uv: [u0, v1],
+            col: c,
+        });
+        self.vertices.push(Vertex {
+            pos: [x + w, y],
+            uv: [u1, v0],
+            col: c,
+        });
+        self.vertices.push(Vertex {
+            pos: [x + w, y + h],
+            uv: [u1, v1],
+            col: c,
+        });
+        self.vertices.push(Vertex {
+            pos: [x, y + h],
+            uv: [u0, v1],
+            col: c,
+        });
+
+        if self.vertices.len() >= 600 {
+            self.flush();
+        }
+        unsafe {
+            gl::Enable(gl::BLEND);
+            gl::BlendFuncSeparate(
+                gl::SRC_ALPHA,
+                gl::ONE_MINUS_SRC_ALPHA,
+                gl::ONE,
+                gl::ONE_MINUS_SRC_ALPHA,
+            );
+            gl::UseProgram(self.program);
+            gl::Uniform2f(self.u_panel, self.panel.0 as f32, self.panel.1 as f32);
+        }
     }
+}
+
+impl Drop for GlCanvas {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteFramebuffers(1, &self.fbo);
+            gl::DeleteTextures(1, &self.fbo_tex);
+            for (_, t) in self.textures.drain() {
+                gl::DeleteTextures(1, &t);
+            }
+            gl::DeleteBuffers(1, &self.vbo);
+            gl::DeleteProgram(self.program);
+        }
+    }
+}
+
+fn shader(kind: gl::types::GLenum, src: &str) -> Result<gl::types::GLuint, GfxError> {
+    let s = unsafe { gl::CreateShader(kind) };
+    let c_src = CString::new(src.replace("\r\n", "\n")).unwrap();
+    unsafe {
+        gl::ShaderSource(s, 1, &c_src.as_ptr(), std::ptr::null());
+        gl::CompileShader(s);
+        let mut ok = 0;
+        gl::GetShaderiv(s, gl::COMPILE_STATUS, &mut ok);
+        if ok == 0 {
+            let log = info_log(s, gl::GetShaderiv, gl::GetShaderInfoLog);
+            gl::DeleteShader(s);
+            return Err(GfxError::Shader(log));
+        }
+    }
+    Ok(s)
+}
+
+fn info_log(
+    id: gl::types::GLuint,
+    get_iv: unsafe fn(gl::types::GLuint, gl::types::GLenum, *mut gl::types::GLint),
+    get_log: unsafe fn(
+        gl::types::GLuint,
+        gl::types::GLsizei,
+        *mut gl::types::GLsizei,
+        *mut gl::types::GLchar,
+    ),
+) -> String {
+    let mut len = 0;
+    unsafe { get_iv(id, gl::INFO_LOG_LENGTH, &mut len) };
+    if len <= 0 {
+        return "no log".into();
+    }
+    let mut buf = vec![0u8; len as usize];
+    unsafe { get_log(id, len, std::ptr::null_mut(), buf.as_mut_ptr() as *mut _) };
+    String::from_utf8_lossy(&buf).trim_end_matches('\0').into()
 }
