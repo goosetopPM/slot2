@@ -53,11 +53,15 @@ impl Platform {
     }
 
     pub fn from_folder(name: &str) -> Option<Platform> {
-        Platform::ALL.into_iter().find(|p| p.folder().eq_ignore_ascii_case(name))
+        Platform::ALL
+            .into_iter()
+            .find(|p| p.folder().eq_ignore_ascii_case(name))
     }
 
     pub fn accepts(self, extension: &str) -> bool {
-        self.extensions().iter().any(|e| e.eq_ignore_ascii_case(extension))
+        self.extensions()
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(extension))
     }
 }
 

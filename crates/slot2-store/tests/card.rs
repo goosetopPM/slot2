@@ -16,7 +16,12 @@ fn cart(card: &Card, p: Platform, stem: &str, ext: &str) -> Cart {
     let rom = card.games_dir(p).join(format!("{stem}.{ext}"));
     fs::create_dir_all(rom.parent().unwrap()).unwrap();
     fs::write(&rom, b"rom").unwrap();
-    Cart { platform: p, stem: stem.into(), title: stem.into(), rom }
+    Cart {
+        platform: p,
+        stem: stem.into(),
+        title: stem.into(),
+        rom,
+    }
 }
 
 // ---------- atomic ----------
@@ -27,10 +32,16 @@ fn atomic_write_creates_parents_and_leaves_no_temp() {
     let p = d.join("a/b/c.bin");
     assert!(atomic_write(&p, b"hello").unwrap());
     assert_eq!(fs::read(&p).unwrap(), b"hello");
-    assert!(!atomic_write(&p, b"hello").unwrap(), "identical bytes are not rewritten");
+    assert!(
+        !atomic_write(&p, b"hello").unwrap(),
+        "identical bytes are not rewritten"
+    );
     assert!(atomic_write(&p, b"hello!").unwrap());
     assert_eq!(fs::read(&p).unwrap(), b"hello!");
-    let leftovers: Vec<_> = fs::read_dir(p.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let leftovers: Vec<_> = fs::read_dir(p.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     assert_eq!(leftovers, vec!["c.bin"], "{leftovers:?}");
 }
 
@@ -82,13 +93,22 @@ fn scan_filters_by_extension_and_sorts_by_title() {
     let titles: Vec<&str> = carts.iter().map(|c| c.title.as_str()).collect();
     assert_eq!(
         titles,
-        vec!["Metroid Fusion (USA)", "Zelda", "apotris", "ファイアーエムブレム", "포켓몬스터 루비"],
+        vec![
+            "Metroid Fusion (USA)",
+            "Zelda",
+            "apotris",
+            "ファイアーエムブレム",
+            "포켓몬스터 루비"
+        ],
         "code-point order: ASCII upper, ASCII lower, kana, hangul"
     );
     let z = carts.iter().find(|c| c.stem == "Zelda").unwrap();
     assert_eq!(z.platform, Platform::Gba);
     assert_eq!(z.rom, g.join("Zelda.gba"));
-    assert!(card.scan(Platform::Snes).is_empty(), "missing folder is an empty shelf");
+    assert!(
+        card.scan(Platform::Snes).is_empty(),
+        "missing folder is an empty shelf"
+    );
     // SNES accepts two extensions; both stems appear.
     let s = card.games_dir(Platform::Snes);
     fs::create_dir_all(&s).unwrap();
@@ -137,15 +157,29 @@ fn states_list_in_order_with_thumbnails() {
     assert_eq!(card.next_state_number(&c), 1);
 
     let thumb_rgba = vec![200u8; 4 * 4 * 4];
-    let thumb = Thumb { width: 4, height: 4, rgba: &thumb_rgba };
-    card.write_state(&c, StateKind::Numbered(2), b"two", Some(thumb.clone())).unwrap();
-    card.write_state(&c, StateKind::Resume, b"resume", None).unwrap();
-    card.write_state(&c, StateKind::Numbered(1), b"one", Some(thumb)).unwrap();
+    let thumb = Thumb {
+        width: 4,
+        height: 4,
+        rgba: &thumb_rgba,
+    };
+    card.write_state(&c, StateKind::Numbered(2), b"two", Some(thumb.clone()))
+        .unwrap();
+    card.write_state(&c, StateKind::Resume, b"resume", None)
+        .unwrap();
+    card.write_state(&c, StateKind::Numbered(1), b"one", Some(thumb))
+        .unwrap();
     assert_eq!(card.next_state_number(&c), 3);
 
     let list = card.list_states(&c);
     let kinds: Vec<StateKind> = list.iter().map(|s| s.kind).collect();
-    assert_eq!(kinds, vec![StateKind::Resume, StateKind::Numbered(1), StateKind::Numbered(2)]);
+    assert_eq!(
+        kinds,
+        vec![
+            StateKind::Resume,
+            StateKind::Numbered(1),
+            StateKind::Numbered(2)
+        ]
+    );
     assert!(list[0].thumb.is_none());
     let t1 = list[1].thumb.clone().expect("thumbnail beside state 1");
     assert_eq!(t1, d.join("States/NES/Mario/1.png"));
@@ -164,8 +198,14 @@ fn states_list_in_order_with_thumbnails() {
     assert!(!d.join("States/NES/Mario/1.png").exists());
     assert_eq!(card.list_states(&c).len(), 2);
     assert_eq!(card.next_state_number(&c), 3, "numbers are never reused");
-    let bad = Thumb { width: 4, height: 4, rgba: &[0; 3] };
-    assert!(card.write_state(&c, StateKind::Numbered(3), b"x", Some(bad)).is_err());
+    let bad = Thumb {
+        width: 4,
+        height: 4,
+        rgba: &[0; 3],
+    };
+    assert!(card
+        .write_state(&c, StateKind::Numbered(3), b"x", Some(bad))
+        .is_err());
 }
 
 // ---------- ini ----------
@@ -176,10 +216,17 @@ fn ini_parses_loosely_and_writes_sorted() {
     let ini = Ini::parse(text);
     assert_eq!(ini.get("lang"), Some("en"), "later wins");
     assert_eq!(ini.get("scale"), Some("Integer"));
-    assert_eq!(ini.get("title"), Some("포켓몬 = 루비"), "split at the first =");
+    assert_eq!(
+        ini.get("title"),
+        Some("포켓몬 = 루비"),
+        "split at the first ="
+    );
     assert_eq!(ini.get("broken line"), None);
     assert_eq!(ini.len(), 3);
-    assert_eq!(ini.to_string(), "lang = en\nscale = Integer\ntitle = 포켓몬 = 루비\n");
+    assert_eq!(
+        ini.to_string(),
+        "lang = en\nscale = Integer\ntitle = 포켓몬 = 루비\n"
+    );
 }
 
 #[test]
@@ -193,5 +240,8 @@ fn ini_load_and_save() {
     ini.save(&p).unwrap();
     let back = Ini::load(&p).unwrap();
     assert_eq!(back, ini);
-    assert_eq!(fs::read_to_string(&p).unwrap(), "brightness = 70\nlang = ko\n");
+    assert_eq!(
+        fs::read_to_string(&p).unwrap(),
+        "brightness = 70\nlang = ko\n"
+    );
 }

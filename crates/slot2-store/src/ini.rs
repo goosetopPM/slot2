@@ -21,18 +21,30 @@ pub struct Ini {
 
 impl Ini {
     pub fn parse(text: &str) -> Ini {
-        let _ = text;
-        todo!("task 07")
+        let mut map = BTreeMap::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                map.insert(k.trim().to_owned(), v.trim().to_owned());
+            }
+        }
+        Ini { map }
     }
 
     pub fn load(path: &Path) -> Result<Ini, Error> {
-        let _ = path;
-        todo!("task 07")
+        if !path.exists() {
+            return Ok(Ini::default());
+        }
+        let text = std::fs::read_to_string(path).map_err(|e| Error::Io(path.to_path_buf(), e))?;
+        Ok(Self::parse(&text))
     }
 
     pub fn save(&self, path: &Path) -> Result<(), Error> {
-        let _ = path;
-        todo!("task 07")
+        crate::atomic::atomic_write(path, self.to_string().as_bytes())?;
+        Ok(())
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
