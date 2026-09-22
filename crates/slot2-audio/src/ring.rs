@@ -96,6 +96,18 @@ impl Producer {
         cap.saturating_sub(len).saturating_sub(1)
     }
 
+    /// Stereo frames written but not yet played. Dynamic rate control steers on this.
+    pub fn queued_frames(&self) -> usize {
+        let head = self.shared.head.load(Ordering::Relaxed);
+        let tail = self.shared.tail.load(Ordering::Acquire);
+        head.wrapping_sub(tail) / CHANNELS
+    }
+
+    /// Stereo frames the ring holds when full.
+    pub fn capacity_frames(&self) -> usize {
+        (self.shared.mask + 1) / CHANNELS
+    }
+
     /// Write what fits; returns how many samples were taken (may be fewer than `samples`).
     pub fn write(&mut self, samples: &[i16]) -> usize {
         let head = self.shared.head.load(Ordering::Relaxed);

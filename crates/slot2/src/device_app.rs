@@ -105,6 +105,7 @@ pub fn run(boot: Boot) {
         app.platform().folder()
     );
     let mut sink: Option<slot2_audio::AlsaSink> = None;
+    let mut last_audio_report = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(1800);
 
     while Instant::now() < deadline {
@@ -153,8 +154,18 @@ pub fn run(boot: Boot) {
             eprintln!("slot2: {e}");
             break;
         }
+        // Every few seconds, one line on how the audio ring is doing. Drops mean the
+        // frame pace and the codec's clock disagree; a queue stuck near 0 or near the
+        // capacity means rate control is not keeping up.
+        if let Some((made, dropped, queued, cap)) = app.audio_health() {
+            if began.duration_since(last_audio_report) >= Duration::from_secs(5) {
+                last_audio_report = began;
+                eprintln!("slot2: audio: {made} frames, {dropped} dropped, ring {queued}/{cap}");
+            }
+        }
+
         let elapsed = began.elapsed();
-        let frame_time = Duration::from_secs_f64(1.0 / 60.0);
+        let frame_time = app.frame_time();
         if elapsed < frame_time {
             sleep(frame_time - elapsed);
         }

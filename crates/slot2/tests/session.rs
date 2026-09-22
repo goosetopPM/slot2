@@ -207,3 +207,45 @@ fn a_missing_core_is_a_clean_error() {
     assert!(matches!(e, slot2::session::Error::NoCore(_)), "{e}");
     assert!(e.to_string().contains("mgba_libretro"), "{e}");
 }
+
+#[test]
+fn a_session_paces_and_produces_audio_at_the_sink_rate() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("pace");
+    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+
+    // A GBA is 59.7275 fps, not 60. Pacing the loop at a flat 1/60 runs the core 0.46 %
+    // fast, and once the ring fills every frame's audio tail is thrown away.
+    let ft = s.frame_time().as_secs_f64();
+    assert!(
+        (ft - 1.0 / 59.7275).abs() < 1e-4,
+        "frame time {ft} is not the GBA's"
+    );
+
+    // The core hands over audio at *its* declared rate (mGBA: 65536 Hz for GBA), and one
+    // frame of it must come out of the resampler as one frame's worth at the sink rate.
+    // This is the regression guard for a clamp that used to rewrite any rate above 50 kHz
+    // to 32768, which made every GBA game play an octave low and twice too fast.
+    let vol = Volume::new(100);
+    let mut buf = vec![0i16; 4096];
+    for _ in 0..2 {
+        s.run_frame(&[], &vol);
+        while consumer.read(&mut buf) > 0 {}
+    }
+    let (before, _, _, _) = s.audio_health();
+    for _ in 0..60 {
+        s.run_frame(&[], &vol);
+        while consumer.read(&mut buf) > 0 {}
+    }
+    let (after, dropped, _, _) = s.audio_health();
+
+    let per_frame = (after - before) as f64 / 60.0;
+    let want = 48_000.0 / 59.7275;
+    assert!(
+        (per_frame - want).abs() / want < 0.02,
+        "{per_frame} audio frames per video frame, expected about {want}"
+    );
+    assert_eq!(dropped, 0, "a drained ring must never drop");
+}
+

@@ -196,11 +196,7 @@ impl Core {
         }
         slot.av_info = AvInfo {
             fps: av.timing.fps,
-            sample_rate: if av.timing.sample_rate > 50000.0 {
-                32768.0
-            } else {
-                av.timing.sample_rate
-            },
+            sample_rate: sane_sample_rate(av.timing.sample_rate),
             base_width: av.geometry.base_width,
             base_height: av.geometry.base_height,
             max_width: av.geometry.max_width,
@@ -709,11 +705,7 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 let av = *(data as *const ffi::retro_system_av_info);
                 s.av_info = AvInfo {
                     fps: av.timing.fps,
-                    sample_rate: if av.timing.sample_rate > 50000.0 {
-                        32768.0
-                    } else {
-                        av.timing.sample_rate
-                    },
+                    sample_rate: sane_sample_rate(av.timing.sample_rate),
                     base_width: av.geometry.base_width,
                     base_height: av.geometry.base_height,
                     max_width: av.geometry.max_width,
@@ -840,6 +832,23 @@ unsafe extern "C" fn audio_sample_batch(data: *const i16, frames: usize) -> usiz
         frames
     })
     .unwrap_or(0)
+}
+
+/// Take the core at its word about its audio rate, rejecting only what cannot be a rate at
+/// all.
+///
+/// There used to be a "sanity" clamp here that rewrote anything above 50 kHz to 32768. It
+/// was wrong: mGBA hands GBA audio over at 65536 Hz (`GBA_OUTPUT_RATE`) and says so, and
+/// halving that number behind its back makes every GBA game play an octave low — then the
+/// twice-too-fast stream overruns the audio ring and is chopped back to roughly the right
+/// tempo, which turns an obvious fault into a vague graininess. A core that lies about its
+/// rate is a bug to fix in the core, not to paper over here.
+fn sane_sample_rate(rate: f64) -> f64 {
+    if rate.is_finite() && (1_000.0..=384_000.0).contains(&rate) {
+        rate
+    } else {
+        32_768.0
+    }
 }
 
 unsafe extern "C" fn input_poll() {}

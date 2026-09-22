@@ -39,8 +39,9 @@
 //! `save_state(kind)` / `load_state(kind)` do the same for the numbered slots.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use slot2_audio::{Consumer, Producer, Resampler, Volume};
+use slot2_audio::{Consumer, Producer, Resampler, Volume, CHANNELS};
 use slot2_gfx::{Canvas, TexId};
 use slot2_retro::{Core, LogicalButton};
 use slot2_store::{Card, Cart, StateKind};
@@ -48,6 +49,19 @@ use slot2_ui::UiCtx;
 
 /// Save RAM is flushed this often while playing.
 pub const SAVE_EVERY_FRAMES: u64 = 600;
+
+/// What to pace a frame at when a core reports nonsense for its fps.
+const FALLBACK_FPS: f64 = 60.0;
+
+/// Turn a core's reported fps into a frame period, rejecting values no console has.
+fn frame_time_for(fps: f64) -> Duration {
+    let fps = if fps.is_finite() && (1.0..=1000.0).contains(&fps) {
+        fps
+    } else {
+        FALLBACK_FPS
+    };
+    Duration::from_secs_f64(1.0 / fps)
+}
 
 /// The resume thumbnail fits inside this box.
 pub const THUMB_MAX: u32 = 160;
@@ -86,6 +100,9 @@ pub struct Session {
     core: Core,
     producer: Producer,
     resampler: Resampler,
+    frame_time: Duration,
+    audio_frames: u64,
+    audio_dropped: u64,
     frames_run: u64,
     video_dirty: bool,
     video_buffer: Vec<u8>,
@@ -163,6 +180,9 @@ impl Session {
             core,
             producer,
             resampler,
+            frame_time: frame_time_for(av.fps),
+            audio_frames: 0,
+            audio_dropped: 0,
             frames_run: 0,
             video_dirty: false,
             video_buffer: Vec::new(),
@@ -173,6 +193,28 @@ impl Session {
         };
 
         Ok((session, consumer))
+    }
+
+    /// How long one core frame should take, from the core's own fps.
+    ///
+    /// The loop must pace on this and not on a flat 1/60: a GBA runs at 59.7275 fps, so
+    /// calling `run_frame` sixty times a second makes the core produce 0.46 % more audio
+    /// than the codec can play. The ring fills within a second and every frame's tail is
+    /// then thrown away — sixty splices a second, which is heard as a grainy buzz under
+    /// the music rather than as distinct clicks.
+    pub fn frame_time(&self) -> Duration {
+        self.frame_time
+    }
+
+    /// `(frames produced, frames the ring had no room for, queued now, ring capacity)`.
+    /// A healthy game drops nothing and sits near half.
+    pub fn audio_health(&self) -> (u64, u64, usize, usize) {
+        (
+            self.audio_frames,
+            self.audio_dropped,
+            self.producer.queued_frames(),
+            self.producer.capacity_frames(),
+        )
     }
 
     pub fn cart(&self) -> &Cart {
@@ -197,11 +239,28 @@ impl Session {
         );
         self.core.run();
 
+        // A core may retime itself mid-game (`SET_SYSTEM_AV_INFO`); reading this back is a
+        // struct copy, so do it every frame rather than trusting what `start` saw.
+        let av = self.core.av_info();
+        self.frame_time = frame_time_for(av.fps);
+        if av.sample_rate as u32 != self.resampler.rates().0 {
+            self.resampler
+                .set_rates(av.sample_rate as u32, self.resampler.rates().1);
+        }
+
+        // Steer the output rate on how full the ring is, before converting this frame.
+        self.resampler.set_output_trim(slot2_audio::drc_trim(
+            self.producer.queued_frames(),
+            self.producer.capacity_frames(),
+        ));
+
         let samples = self.core.take_audio();
         self.scratch_audio.clear();
         self.resampler.process(&samples, &mut self.scratch_audio);
         volume.apply(&mut self.scratch_audio);
-        self.producer.write(&self.scratch_audio);
+        let took = self.producer.write(&self.scratch_audio);
+        self.audio_frames += (self.scratch_audio.len() / CHANNELS) as u64;
+        self.audio_dropped += ((self.scratch_audio.len() - took) / CHANNELS) as u64;
 
         if let Some(frame) = self.core.frame() {
             if frame.width != self.last_width || frame.height != self.last_height {

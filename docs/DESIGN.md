@@ -160,6 +160,10 @@ struct PlatformDef {
 
 **코어 빌드** (`cores/<name>/build.sh`): 핀 커밋 + 패치, `.meta` 스탬프로 재빌드 판정, 산출물 `vendor/<name>_libretro.so`. 원본 mGBA·gpSP 패치는 그대로 가져온다.
 
+**코어가 신고한 값은 그대로 받는다.** 코어의 `sample_rate`·`fps`는 호스트가 "상식적인 범위"로 다듬을 대상이 아니다. mGBA는 GBA 오디오를 **65536 Hz**(`GBA_OUTPUT_RATE`, GBA 사운드 FIFO의 32768 Hz의 두 배)로 내보내고 그렇게 신고한다. 한때 호스트에 "50 kHz 넘으면 32768로 간주" 클램프가 있었고, 그 탓에 모든 GBA 게임이 한 옥타브 낮게·두 배 느리게 재생됐다. 게다가 초과분이 오디오 링을 넘쳐 잘려 나가면서 템포만 얼추 맞아 보여, **명백한 고장이 막연한 잡음처럼 위장**됐다. 검증은 범위가 아니라 **자기일관성**으로 한다 — 신고한 레이트와 실제로 넘겨준 샘플 수가 일치하는지(`the_declared_sample_rate_is_what_the_core_actually_produces`).
+
+**프레임 페이싱과 동적 레이트 제어.** 루프는 1/60이 아니라 **코어의 `fps`**로 재운다(GBA 59.7275). 60 Hz로 돌리면 코어가 0.46 % 많은 오디오를 만들고, 링이 찬 뒤로는 매 프레임 꼬리가 버려져 초당 60번 이어붙는 소리가 난다. 남는 표류(호스트 시계 ↔ 코덱 48 kHz 크리스털)는 `drc_trim`이 링 점유율을 보고 출력 레이트를 ±0.5 % 안에서 미세 조정해 흡수한다. 0.5 %는 음정 변화로 들리지 않고, 대안(샘플을 버리거나 반복하기)은 곧 클릭이다.
+
 ---
 
 ## 7. UI (`slot2-ui`)
@@ -314,18 +318,22 @@ face 래스터 → 텍스처
 
 실기·환경에서 확인해야 확정되는 것. 각 항목은 해당 마일스톤에서 닫는다.
 
-| # | 항목 | 확인 방법 | 마일스톤 |
-|---|---|---|---|
-| V-1 | RG SP의 실제 버튼 구성(L2/R2 유무, 아날로그 축 유무), evdev 장치명·키코드 | `adb shell "cat /proc/bus/input/devices"` + `evtest` | M0 |
-| V-2 | RG SP 뚜껑 스위치·백라이트·배터리 sysfs 경로 | `adb shell "ls /sys/class/backlight /sys/class/power_supply; grep -r . /sys/class/input/*/name"` | M0 |
-| V-3 | BaseOS glibc 실제 버전 | `adb shell "/lib/ld-linux-aarch64.so.1 --version"` | M0 |
-| V-4 | `System/frontend` 경로로 부팅되는지, `/tmp/frontend.log` 생성 | 배포 후 `adb shell cat /tmp/frontend.log` | M0 |
-| V-5 | 호스트 빌드가 Windows 네이티브에서 도는지 | `cargo run -p slot2` | M0 |
-| V-6 | fbdev EGL 초기화·60Hz 스왑이 RG SP(720×480)에서 정상 | M0 스플래시 | M0 |
-| V-7 | ALSA 장치명(RG SP) | `adb shell "cat /proc/asound/cards"` | M1 |
-| V-8 | 5개 코어의 H700 실속도 | 코어별 벤치(`core_bench` 이식) | M2 |
-| V-9 | 640×480·720×720 기기 실기 확인 (보유 시) | 커뮤니티 테스트 | M6 |
-| V-10 | Noto Sans KR 서브셋의 RG SP 로딩 시간·메모리 | 부팅 로그에 `font: loaded N glyphs in X ms` | M0 |
-| V-11 | BaseOS 루트FS에 `wpa_supplicant`, `udhcpc`, `rfkill` 존재 여부와 경로 | `adb shell "which wpa_supplicant udhcpc rfkill; ls /data"` | M0 |
-| V-12 | SLOT2가 띄운 wpa_supplicant + udhcpc로 `rgsp.local` SFTP 접속 성공 | 연동 모드 진입 후 PC에서 `sftp root@rgsp.local` | M4 |
-| V-13 | HDMI 연결 시 커널이 패널을 미러링하는지, `/dev/fb0` 해상도가 바뀌는지, 핫플러그 시 EGL 서피스가 살아남는지 | 케이블 연결 전후 `adb shell "cat /sys/class/graphics/fb0/virtual_size; ls /sys/class/drm"` + 부팅 로그 | M0 (관찰) / M6 (결정) |
+원본 로그는 `docs/device/rgsp-diag.txt`(진단)와 `docs/device/rgsp-input.txt`(입력 프로브).
+
+| # | 항목 | 확인 방법 | 마일스톤 | 결과 |
+|---|---|---|---|---|
+| V-1 | RG SP의 실제 버튼 구성(L2/R2 유무, 아날로그 축 유무), evdev 장치명·키코드 | `adb shell "cat /proc/bus/input/devices"` + `evtest` | M0 | ✅ 2026-09 실기. evdev 3개(`axp2202-pek`/`ANBERNIC-keys`/`dierct-keys-polled`), 아날로그 없음, L2/R2 있음. **벤더 드라이버가 리눅스 게임패드 관례를 따르지 않음**: 페이스/숄더가 `BTN_SOUTH..BTN_START`(304–315)에 한 칸씩 밀려 배치되고 D-패드는 키가 아니라 `ABS_HAT0X/Y`(±1). 메뉴키는 312와 354를 동시에 냄. 실측 표 = `DEFAULT_H700_KEYMAP` |
+| V-2 | RG SP 뚜껑 스위치·백라이트·배터리 sysfs 경로 | `adb shell "ls /sys/class/backlight /sys/class/power_supply; grep -r . /sys/class/input/*/name"` | M0 | ⚠️ 배터리 `/sys/class/power_supply/axp2202-{battery,usb}` 확인. **`/sys/class/backlight` 없음** — `/sys/class/pwm/pwmchip0`뿐이라 밝기 경로 미정(M4 전 재조사). 뚜껑은 `gpio-keys-polled`(= `dierct-keys-polled`) 후보 |
+| V-3 | BaseOS glibc 실제 버전 | `adb shell "/lib/ld-linux-aarch64.so.1 --version"` | M0 | ✅ 2.35. bullseye(2.31) 기준 크로스빌드로 충분 |
+| V-4 | `System/frontend` 경로로 부팅되는지, `/tmp/frontend.log` 생성 | 배포 후 `adb shell cat /tmp/frontend.log` | M0 | ✅ `cwd=/mnt/sdcard`, TF2 = `mmcblk0p7` vfat + `utf8` (한글 파일명 OK) |
+| V-5 | 호스트 빌드가 Windows 네이티브에서 도는지 | `cargo run -p slot2` | M0 | ✅ |
+| V-6 | fbdev EGL 초기화·60Hz 스왑이 RG SP(720×480)에서 정상 | M0 스플래시 | M0 | ✅ `/dev/mali0` + `libEGL.so.1`/`libGLESv2.so.2` 존재, dlopen 성공. fb0 `virtual_size=720,960`(더블버퍼) / `modes=U:720x480p-59` → 패널은 720×480 |
+| V-7 | ALSA 장치명(RG SP) | `adb shell "cat /proc/asound/cards"` | M1 | ✅ card0 `audiocodec`(`pcmC0D0p`), card2 `ahubhdmi`. 실기 게임 구동에서 소리 확인 |
+| V-8 | 5개 코어의 H700 실속도 | 코어별 벤치(`core_bench` 이식) | M2 | ⬜ |
+| V-9 | 640×480·720×720 기기 실기 확인 (보유 시) | 커뮤니티 테스트 | M6 | ⬜ |
+| V-10 | Noto Sans KR 서브셋의 RG SP 로딩 시간·메모리 | 부팅 로그에 `font: loaded N glyphs in X ms` | M0 | ⚠️ A53에서 전체 폰트 파싱 52초 → 지연 로딩으로 부팅은 막지 않으나 서브셋이 M5보다 앞당겨질 수 있음 |
+| V-11 | BaseOS 루트FS에 `wpa_supplicant`, `udhcpc`, `rfkill` 존재 여부와 경로 | `adb shell "which wpa_supplicant udhcpc rfkill; ls /data"` | M0 | ✅ `/usr/sbin`에 `wpa_supplicant`·`wpa_cli`·`udhcpc`·`rfkill`·`dropbear`·`avahi-daemon` 모두 존재. `iw`는 없음 |
+| V-12 | SLOT2가 띄운 wpa_supplicant + udhcpc로 `rgsp.local` SFTP 접속 성공 | 연동 모드 진입 후 PC에서 `sftp root@rgsp.local` | M4 | ⬜ |
+| V-13 | HDMI 연결 시 커널이 패널을 미러링하는지, `/dev/fb0` 해상도가 바뀌는지, 핫플러그 시 EGL 서피스가 살아남는지 | 케이블 연결 전후 `adb shell "cat /sys/class/graphics/fb0/virtual_size; ls /sys/class/drm"` + 부팅 로그 | M0 (관찰) / M6 (결정) | ⚠️ **`/sys/class/drm` 없음**(커널 4.9 벤더 fbdev) — DRM 커넥터로는 핫플러그를 알 수 없음. `fb0/virtual_size` 폴링 또는 `ahubhdmi` 상태가 대안 후보. D-22 재검토 필요 |
+
+M1 실기 확인(2026-09): 방향키 이동 · A 실행 · MENU 길게 → 전원 메뉴 · L1/R1 플랫폼 전환 · 전원 끄기(`baseos-poweroff`) · 게임 구동 모두 정상.

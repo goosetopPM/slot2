@@ -22,7 +22,7 @@ pub mod volume;
 pub use alsa::AlsaSink;
 #[cfg(feature = "host")]
 pub use host::HostSink;
-pub use resample::Resampler;
+pub use resample::{drc_trim, Resampler, DRC_MAX};
 pub use ring::{Consumer, Producer, Ring};
 pub use volume::Volume;
 

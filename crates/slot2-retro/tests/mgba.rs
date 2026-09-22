@@ -71,11 +71,13 @@ fn loads_and_reports_itself() {
     let av = core.av_info();
     assert_eq!((av.base_width, av.base_height), (240, 160));
     assert!((av.fps - 59.727).abs() < 0.1, "{}", av.fps);
-    assert!(
-        av.sample_rate > 30_000.0 && av.sample_rate < 50_000.0,
-        "{}",
-        av.sample_rate
-    );
+    // mGBA hands GBA audio over at 65536 Hz (`GBA_OUTPUT_RATE`), twice the rate the GBA's
+    // own sound FIFO runs at, and it says so. This assertion used to read "between 30k and
+    // 50k because no console goes higher", which is false, and the host was made to satisfy
+    // it by clamping the core's answer down to 32768 — detuning every GBA game an octave.
+    // The rate a core reports is the core's business; see
+    // `the_declared_sample_rate_is_what_the_core_actually_produces` for the real invariant.
+    assert_eq!(av.sample_rate, 65_536.0, "mGBA's declared GBA output rate");
     assert!(matches!(
         core.pixel_format(),
         PixelFormat::Xrgb8888 | PixelFormat::Rgb565
@@ -303,4 +305,37 @@ fn frame_conversion_expands_channels_correctly() {
         data: vec![0xFF, 0x7F], // 0x7FFF: all channels max
     };
     assert_eq!(f.rgb(0, 0), [255, 255, 255]);
+}
+
+#[test]
+fn the_declared_sample_rate_is_what_the_core_actually_produces() {
+    let _serial = serial();
+    let Some(mut core) = load("rate") else { return };
+    let av = core.av_info();
+
+    // mGBA declares 65536 Hz for GBA (`GBA_OUTPUT_RATE`), well above CD rates. A clamp
+    // here once rewrote anything over 50 kHz to 32768 "for sanity", and the result was
+    // every GBA game playing an octave low at half speed, chopped back to roughly the
+    // right tempo by the audio ring overflowing. Whatever a core says its rate is, the
+    // audio it hands over has to agree with it — that is the invariant, not a range.
+    assert!(av.sample_rate >= 8_000.0, "{}", av.sample_rate);
+
+    core.run(); // the first frame is partial; drop it
+    let _ = core.take_audio();
+    const FRAMES: usize = 8;
+    let mut stereo = 0usize;
+    for _ in 0..FRAMES {
+        core.run();
+        stereo += core.take_audio().len() / 2;
+    }
+
+    let measured = (stereo as f64 / FRAMES as f64) * av.fps;
+    assert!(
+        (measured - av.sample_rate).abs() / av.sample_rate < 0.02,
+        "core declares {} Hz but produces {measured:.0} Hz ({} stereo frames over {FRAMES} \
+         video frames at {} fps)",
+        av.sample_rate,
+        stereo,
+        av.fps
+    );
 }

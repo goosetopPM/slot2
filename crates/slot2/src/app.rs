@@ -22,7 +22,7 @@
 //! over it. Once `exit` is set no further actions change anything.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use slot2_gfx::Canvas;
 use slot2_input::{Action, Button, Event, GestureConfig, Gestures, State};
@@ -166,6 +166,21 @@ impl App {
         for action in actions {
             self.act(action);
         }
+    }
+
+    /// How long this frame should take. A running game sets the pace — its core's fps is
+    /// what its audio rate is derived from, and pacing to anything else makes the two
+    /// disagree. With no game, the shelf redraws at 60 Hz.
+    pub fn frame_time(&self) -> Duration {
+        match self.session.as_ref() {
+            Some(s) => s.frame_time(),
+            None => Duration::from_secs_f64(1.0 / 60.0),
+        }
+    }
+
+    /// `(frames produced, dropped, queued, capacity)` for the running game's audio.
+    pub fn audio_health(&self) -> Option<(u64, u64, usize, usize)> {
+        self.session.as_ref().map(|s| s.audio_health())
     }
 
     /// Advance the game, if one is running. Called once per frame by the loop.

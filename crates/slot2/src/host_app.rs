@@ -23,7 +23,7 @@
 //! there is nothing to recover to on a desktop.
 
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use slot2_audio::Sink as _;
 use slot2_gfx::{GlCanvas, HostEvent, HostSurface, KeyCode};
@@ -132,7 +132,7 @@ pub fn run(boot: Boot) {
         }
 
         let elapsed = began.elapsed();
-        let frame_time = Duration::from_secs_f64(1.0 / 60.0);
+        let frame_time = app.frame_time();
         if elapsed < frame_time {
             sleep(frame_time - elapsed);
         }
