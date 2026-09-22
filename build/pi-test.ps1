@@ -37,7 +37,11 @@ function Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 
 if ($Setup) {
     Step "preparing $remote on $Pi"
-    ssh $Pi "sudo mkdir -p $remote/assets $remote/vendor $remote/bin && sudo chown -R `$USER $remote"
+    # The crate directories must exist even though they stay empty: a test resolves its
+    # assets as `<manifest dir>/../../assets`, and the kernel only walks `..` through
+    # directories that are really there.
+    $crateDirs = (Get-ChildItem crates -Directory | ForEach-Object { "$remote/crates/$($_.Name)" }) -join ' '
+    ssh $Pi "sudo mkdir -p $remote/assets $remote/vendor $remote/bin $crateDirs && sudo chown -R `$USER $remote"
     if ($LASTEXITCODE -ne 0) { throw "could not create $remote (sudo password needed?)" }
     scp -r assets/fonts assets/lang assets/test "${Pi}:$remote/assets/"
     $so = Get-ChildItem vendor\*_libretro.so -ErrorAction SilentlyContinue
@@ -73,17 +77,13 @@ if ($LASTEXITCODE -ne 0) { throw "scp failed (run with -Setup first?)" }
 
 Step "running on the Pi"
 $names = ($local | ForEach-Object { Split-Path -Leaf $_ }) -join ' '
-$script = @"
-cd $remote
-fail=0
-for t in $names; do
-  echo "---- \$t ----"
-  chmod +x bin/\$t
-  ./bin/\$t --test-threads=1 || fail=1
-done
-exit \$fail
-"@
-ssh $Pi $script
+# Written to a file on the Pi rather than passed inline: a remote command goes through two
+# shells, and every `$` in a loop would have to survive both.
+$runner = "cd $remote`nfail=0`nfor t in $names; do`n  echo `"---- `$t ----`"`n  chmod +x bin/`$t`n  ./bin/`$t --test-threads=1 || fail=1`ndone`nexit `$fail`n"
+$tmp = Join-Path $env:TEMP 'slot2-pi-run.sh'
+[IO.File]::WriteAllText($tmp, $runner.Replace("`r`n", "`n"), (New-Object Text.UTF8Encoding $false))
+scp $tmp "${Pi}:$remote/run.sh" | Out-Null
+ssh $Pi "sh $remote/run.sh"
 $code = $LASTEXITCODE
 Step $(if ($code -eq 0) { "all green on aarch64" } else { "FAILURES on aarch64 (exit $code)" })
 exit $code
