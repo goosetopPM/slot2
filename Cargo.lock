@@ -1506,6 +1506,9 @@ version = "0.1.0"
 [[package]]
 name = "slot2-retro"
 version = "0.1.0"
+dependencies = [
+ "libloading",
+]
 
 [[package]]
 name = "slot2-store"

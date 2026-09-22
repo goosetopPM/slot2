@@ -1,9 +1,10 @@
-﻿[package]
+[package]
 name = "slot2-retro"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Core-agnostic libretro host, per-core quirks, platform registry"
+description = "Core-agnostic libretro host: load a core, run frames, video/audio/input, states, save RAM, options"
 
 [dependencies]
+libloading = "0.8"
