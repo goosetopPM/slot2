@@ -1,3 +1,7 @@
 [toolchain]
 channel = "stable"
+profile = "minimal"
 components = ["rustfmt", "clippy"]
+# Listed here so whichever toolchain rustup syncs for this repo gets the device target too,
+# on the host and inside build/cross.Dockerfile alike.
+targets = ["aarch64-unknown-linux-gnu"]

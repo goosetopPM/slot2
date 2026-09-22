@@ -6,9 +6,13 @@
 # system library is dlopen'd at runtime) and the C cores (cmake/make with the cross gcc).
 #
 #   docker build -t slot2-cross -f build/cross.Dockerfile build
-#   docker run --rm -v "${PWD}:/src" -w /src slot2-cross \
+#   docker run --rm -v "${PWD}:/src" -v slot2-cargo:/cargo -v slot2-rustup:/usr/local/rustup \
+#       -w /src slot2-cross \
 #       cargo build --profile device --target aarch64-unknown-linux-gnu \
 #       --target-dir target-device -p slot2 --no-default-features --features device
+#
+# The repo's rust-toolchain.toml makes rustup sync its own stable toolchain (with the aarch64
+# target listed there) on first use; the slot2-rustup volume keeps that download.
 
 FROM rust:1-bullseye
 
