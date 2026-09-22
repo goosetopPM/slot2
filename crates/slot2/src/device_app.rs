@@ -78,6 +78,13 @@ pub fn run(boot: Boot) {
         Some(&boot.root.join("System/Lang")),
     );
 
+    // A card asking for the input probe gets it instead of the frontend: one boot, then it
+    // goes back to normal.
+    if slot2::probe::wanted(&boot.root) {
+        slot2::probe::run(&boot.root, &mut canvas, &mut surface, &mut ctx);
+        return;
+    }
+
     let mut source = slot2_input::EvdevSource::open_all(slot2_input::KeyMap::from_pairs(
         slot2_input::DEFAULT_H700_KEYMAP,
     ));

@@ -34,6 +34,11 @@ pub const EV_ABS: u16 = 3;
 pub const EV_SW: u16 = 5;
 pub const SW_LID: u16 = 0;
 
+/// Hat axes. Most handhelds report their D-pad as a hat rather than as keys, so these are
+/// translated into `Button::Left/Right/Up/Down` press and release pairs.
+pub const ABS_HAT0X: u16 = 16;
+pub const ABS_HAT0Y: u16 = 17;
+
 /// One decoded `input_event`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RawEvent {
@@ -135,6 +140,20 @@ pub const DEFAULT_H700_KEYMAP: &[(u16, Button)] = &[
 pub struct EvdevSource {
     keymap: KeyMap,
     devices: Vec<std::fs::File>,
+    /// Last value seen on each hat axis, so a move produces a release of the old direction
+    /// and a press of the new one.
+    hat: (i32, i32),
+    /// Every raw event since the last `take_raw_log`, when logging is on.
+    raw_log: Option<Vec<(usize, RawEvent)>>,
+}
+
+/// Which buttons a hat value means: negative is left/up, positive right/down.
+fn hat_buttons(axis: u16) -> (Button, Button) {
+    if axis == ABS_HAT0X {
+        (Button::Left, Button::Right)
+    } else {
+        (Button::Up, Button::Down)
+    }
 }
 
 impl EvdevSource {
@@ -157,7 +176,12 @@ impl EvdevSource {
                 }
             }
         }
-        EvdevSource { keymap, devices }
+        EvdevSource {
+            keymap,
+            devices,
+            hat: (0, 0),
+            raw_log: None,
+        }
     }
 
     /// How many device nodes are open.
@@ -169,7 +193,7 @@ impl EvdevSource {
     pub fn poll(&mut self, now: Instant) -> Vec<Event> {
         let mut events = Vec::new();
         let mut buf = [0u8; 24 * 64];
-        for file in &mut self.devices {
+        for (index, file) in self.devices.iter_mut().enumerate() {
             use std::io::Read;
             loop {
                 match file.read(&mut buf) {
@@ -177,6 +201,51 @@ impl EvdevSource {
                     Ok(n) => {
                         for chunk in buf[..n].as_chunks::<24>().0 {
                             if let Some(raw) = parse_input_event(chunk) {
+                                if let Some(log) = self.raw_log.as_mut() {
+                                    if raw.type_ != EV_SYN {
+                                        log.push((index, raw));
+                                    }
+                                }
+                                // A D-pad reported as a hat becomes press and release
+                                // pairs; `map_raw` cannot do this because it needs the
+                                // previous value.
+                                if raw.type_ == EV_ABS
+                                    && (raw.code == ABS_HAT0X || raw.code == ABS_HAT0Y)
+                                {
+                                    let (neg, pos) = hat_buttons(raw.code);
+                                    let last = if raw.code == ABS_HAT0X {
+                                        std::mem::replace(&mut self.hat.0, raw.value)
+                                    } else {
+                                        std::mem::replace(&mut self.hat.1, raw.value)
+                                    };
+                                    if last < 0 {
+                                        events.push(Event::Button {
+                                            button: neg,
+                                            pressed: false,
+                                            at: now,
+                                        });
+                                    } else if last > 0 {
+                                        events.push(Event::Button {
+                                            button: pos,
+                                            pressed: false,
+                                            at: now,
+                                        });
+                                    }
+                                    if raw.value < 0 {
+                                        events.push(Event::Button {
+                                            button: neg,
+                                            pressed: true,
+                                            at: now,
+                                        });
+                                    } else if raw.value > 0 {
+                                        events.push(Event::Button {
+                                            button: pos,
+                                            pressed: true,
+                                            at: now,
+                                        });
+                                    }
+                                    continue;
+                                }
                                 if let Some(ev) = Self::map_raw(&self.keymap, raw, now) {
                                     events.push(ev);
                                 }
@@ -192,6 +261,20 @@ impl EvdevSource {
             }
         }
         events
+    }
+
+    /// Start recording every raw event (except `EV_SYN`) with the index of the device it
+    /// came from. What the on-device input probe reads to learn a board's real codes.
+    pub fn log_raw(&mut self, on: bool) {
+        self.raw_log = if on { Some(Vec::new()) } else { None };
+    }
+
+    /// Take what has been recorded since the last call.
+    pub fn take_raw_log(&mut self) -> Vec<(usize, RawEvent)> {
+        match self.raw_log.as_mut() {
+            Some(v) => std::mem::take(v),
+            None => Vec::new(),
+        }
     }
 
     /// Map one raw event with this source's keymap — the pure core of `poll`, exposed so a
