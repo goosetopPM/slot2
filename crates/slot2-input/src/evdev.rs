@@ -93,8 +93,10 @@ pub mod codes {
     pub const KEY_POWER: u16 = 116;
     pub const BTN_SOUTH: u16 = 0x130; // A on a gamepad
     pub const BTN_EAST: u16 = 0x131; // B
+    pub const BTN_C: u16 = 0x132;
     pub const BTN_NORTH: u16 = 0x133; // X
     pub const BTN_WEST: u16 = 0x134; // Y
+    pub const BTN_Z: u16 = 0x135;
     pub const BTN_TL: u16 = 0x136; // L1
     pub const BTN_TR: u16 = 0x137; // R1
     pub const BTN_TL2: u16 = 0x138; // L2
@@ -102,26 +104,42 @@ pub mod codes {
     pub const BTN_SELECT: u16 = 0x13a;
     pub const BTN_START: u16 = 0x13b;
     pub const BTN_MODE: u16 = 0x13c; // MENU / guide
+    /// The second code the RG SP's menu key sends beside BTN_TL2.
+    pub const KEY_MENU_ALT: u16 = 0x162;
     pub const BTN_DPAD_UP: u16 = 0x220;
     pub const BTN_DPAD_DOWN: u16 = 0x221;
     pub const BTN_DPAD_LEFT: u16 = 0x222;
     pub const BTN_DPAD_RIGHT: u16 = 0x223;
 }
 
-/// A first guess at the H700 gamepad node's codes, to be corrected from the first-boot
-/// survey (V-1). Face buttons follow the Linux gamepad convention; the D-pad is listed
-/// both as KEY_* and BTN_DPAD_* since drivers differ.
+/// What an Anbernic H700 board really reports, measured on an RG SP with the on-card input
+/// probe (`docs/device/rgsp-input.txt`). The vendor driver does not follow the Linux gamepad
+/// convention at all — its face row is `BTN_SOUTH, BTN_EAST, BTN_C, BTN_NORTH`, the
+/// shoulders are `BTN_WEST`/`BTN_Z` and `BTN_SELECT`/`BTN_START`, and SELECT/START are
+/// `BTN_TL`/`BTN_TR` — so every entry below is what the hardware sends, not what the name
+/// suggests. The D-pad is a hat (`ABS_HAT0X/Y`), handled in `poll` rather than here.
+///
+/// The generic names are kept as extra entries where they cannot clash, so a board that
+/// does follow the convention still works.
 pub const DEFAULT_H700_KEYMAP: &[(u16, Button)] = &[
-    (codes::BTN_SOUTH, Button::A),
-    (codes::BTN_EAST, Button::B),
-    (codes::BTN_NORTH, Button::X),
-    (codes::BTN_WEST, Button::Y),
-    (codes::BTN_TL, Button::L1),
-    (codes::BTN_TR, Button::R1),
-    (codes::BTN_TL2, Button::L2),
-    (codes::BTN_TR2, Button::R2),
-    (codes::BTN_SELECT, Button::Select),
-    (codes::BTN_START, Button::Start),
+    // Measured on the RG SP.
+    (codes::BTN_SOUTH, Button::A),   // 304
+    (codes::BTN_EAST, Button::B),    // 305
+    (codes::BTN_C, Button::Y),       // 306
+    (codes::BTN_NORTH, Button::X),   // 307
+    (codes::BTN_WEST, Button::L1),   // 308
+    (codes::BTN_Z, Button::R1),      // 309
+    (codes::BTN_TL, Button::Select), // 310
+    (codes::BTN_TR, Button::Start),  // 311
+    (codes::BTN_TL2, Button::Menu),  // 312
+    (codes::BTN_SELECT, Button::L2), // 314
+    (codes::BTN_START, Button::R2),  // 315
+    // The menu key sends this alongside 312 on the RG SP; treat it as the same button.
+    (codes::KEY_MENU_ALT, Button::Menu), // 354
+    (codes::KEY_VOLUMEUP, Button::VolUp),
+    (codes::KEY_VOLUMEDOWN, Button::VolDown),
+    (codes::KEY_POWER, Button::Power),
+    // Conventional spellings, for boards that use them. None of these codes appear above.
     (codes::BTN_MODE, Button::Menu),
     (codes::KEY_UP, Button::Up),
     (codes::KEY_DOWN, Button::Down),
@@ -131,11 +149,7 @@ pub const DEFAULT_H700_KEYMAP: &[(u16, Button)] = &[
     (codes::BTN_DPAD_DOWN, Button::Down),
     (codes::BTN_DPAD_LEFT, Button::Left),
     (codes::BTN_DPAD_RIGHT, Button::Right),
-    (codes::KEY_VOLUMEUP, Button::VolUp),
-    (codes::KEY_VOLUMEDOWN, Button::VolDown),
-    (codes::KEY_POWER, Button::Power),
 ];
-
 /// All readable `/dev/input/event*` nodes, mapped through one `KeyMap`.
 pub struct EvdevSource {
     keymap: KeyMap,
