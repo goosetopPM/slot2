@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # Everything that runs on the host: format, both clippy configurations, the test suite.
+  # GL tests skip themselves without SLOT2_GFX_TEST, so no display is needed.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy (host)
+        run: cargo clippy --workspace --all-targets --features slot2-input/host -- -D warnings
+      - name: clippy (device)
+        run: cargo clippy -p slot2 -p slot2-gfx -p slot2-ui -p slot2-input --no-default-features --features slot2/device -- -D warnings
+      - name: test
+        run: cargo test --workspace --features slot2-input/host
+
+  # The real thing: aarch64, glibc 2.31 floor, built in the same container developers use.
+  device:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - name: build cross image
+        run: docker build -t slot2-cross -f build/cross.Dockerfile build
+      - name: cross build (profile device)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src slot2-cross \
+            sh -c "cargo build --profile device --target aarch64-unknown-linux-gnu --target-dir target-device -p slot2 --no-default-features --features device \
+                   && file target-device/aarch64-unknown-linux-gnu/device/slot2"
+      - name: assemble card tree
+        run: |
+          out=dist-device
+          mkdir -p "$out/System/Fonts" "$out/System/licenses/fonts"
+          cp target-device/aarch64-unknown-linux-gnu/device/slot2 "$out/System/frontend"
+          cp assets/fonts/*.otf assets/fonts/*.ttf "$out/System/Fonts/"
+          cp assets/fonts/*.txt "$out/System/licenses/fonts/"
+          echo "SLOT2 $(git rev-parse --short HEAD) — copy the contents of this folder to the card root" > "$out/System/VERSION.txt"
+          ls -lR "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slot2-device-${{ github.sha }}
+          path: dist-device
+          if-no-files-found: error
