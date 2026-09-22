@@ -16,6 +16,7 @@
 //!     `RightX/RightY`, `ABS_Z=2` → `L2`, `ABS_RZ=5` → `R2`, scaled by the axis range from
 //!     `keymap.abs_range` (default -32768..=32767 for sticks, 0..=255 for triggers)
 //!   - `EV_SW` `SW_LID` → `Event::Lid`
+//!
 //!   Everything else is dropped. Unix-only code sits behind `#[cfg(unix)]`; on other
 //!   targets `open_all` returns a source with no devices and `poll` returns nothing, so the
 //!   crate builds and its tests run on Windows.
@@ -43,8 +44,13 @@ pub struct RawEvent {
 
 /// Decode one 24-byte little-endian `input_event`. `None` if `bytes` is too short.
 pub fn parse_input_event(bytes: &[u8]) -> Option<RawEvent> {
-    let _ = bytes;
-    todo!("task 05")
+    if bytes.len() < 24 {
+        return None;
+    }
+    let type_ = u16::from_le_bytes([bytes[16], bytes[17]]);
+    let code = u16::from_le_bytes([bytes[18], bytes[19]]);
+    let value = i32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    Some(RawEvent { type_, code, value })
 }
 
 /// Key code → button, plus axis ranges. Data, so a device profile (or a user file later)
@@ -127,30 +133,116 @@ pub const DEFAULT_H700_KEYMAP: &[(u16, Button)] = &[
 
 /// All readable `/dev/input/event*` nodes, mapped through one `KeyMap`.
 pub struct EvdevSource {
-    _todo: (),
+    keymap: KeyMap,
+    devices: Vec<std::fs::File>,
 }
 
 impl EvdevSource {
     pub fn open_all(keymap: KeyMap) -> Self {
-        let _ = keymap;
-        todo!("task 05")
+        #[allow(unused_mut)]
+        let mut devices = Vec::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            for i in 0..32 {
+                let path = format!("/dev/input/event{}", i);
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(0o4000) // O_NONBLOCK
+                    .open(&path);
+                match file {
+                    Ok(f) => devices.push(f),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => eprintln!("slot2: failed to open {}: {}", path, e),
+                }
+            }
+        }
+        EvdevSource { keymap, devices }
     }
 
     /// How many device nodes are open.
     pub fn device_count(&self) -> usize {
-        todo!("task 05")
+        self.devices.len()
     }
 
     /// Everything pending, stamped `now`. Never blocks.
     pub fn poll(&mut self, now: Instant) -> Vec<Event> {
-        let _ = now;
-        todo!("task 05")
+        let mut events = Vec::new();
+        let mut buf = [0u8; 24 * 64];
+        for file in &mut self.devices {
+            use std::io::Read;
+            loop {
+                match file.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        for chunk in buf[..n].as_chunks::<24>().0 {
+                            if let Some(raw) = parse_input_event(chunk) {
+                                if let Some(ev) = Self::map_raw(&self.keymap, raw, now) {
+                                    events.push(ev);
+                                }
+                            }
+                        }
+                        if n < buf.len() {
+                            break;
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+        }
+        events
     }
 
     /// Map one raw event with this source's keymap — the pure core of `poll`, exposed so a
     /// test can drive it without a device.
     pub fn map_raw(keymap: &KeyMap, raw: RawEvent, now: Instant) -> Option<Event> {
-        let _ = (keymap, raw, now);
-        todo!("task 05")
+        match raw.type_ {
+            EV_KEY if raw.value == 0 || raw.value == 1 => {
+                if let Some(button) = keymap.button(raw.code) {
+                    return Some(Event::Button {
+                        button,
+                        pressed: raw.value == 1,
+                        at: now,
+                    });
+                }
+            }
+            EV_ABS => {
+                let (axis, range) = match raw.code {
+                    0 => (Some(crate::Axis::LeftX), keymap.stick_range),
+                    1 => (Some(crate::Axis::LeftY), keymap.stick_range),
+                    3 => (Some(crate::Axis::RightX), keymap.stick_range),
+                    4 => (Some(crate::Axis::RightY), keymap.stick_range),
+                    2 => (Some(crate::Axis::L2), keymap.trigger_range),
+                    5 => (Some(crate::Axis::R2), keymap.trigger_range),
+                    _ => (None, (0, 0)),
+                };
+                if let Some(axis) = axis {
+                    let (min, max) = range;
+                    if max != min {
+                        let mut v = (raw.value - min) as f32 / (max - min) as f32;
+                        v = v.clamp(0.0, 1.0);
+                        let value = if raw.code == 2 || raw.code == 5 {
+                            v
+                        } else {
+                            v * 2.0 - 1.0
+                        };
+                        return Some(Event::Axis {
+                            axis,
+                            value,
+                            at: now,
+                        });
+                    }
+                }
+            }
+            EV_SW if raw.code == SW_LID => {
+                return Some(Event::Lid {
+                    closed: raw.value == 1,
+                    at: now,
+                });
+            }
+            _ => {}
+        }
+        None
     }
 }

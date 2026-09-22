@@ -26,8 +26,9 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use slot2_gfx::{GlCanvas, HostEvent, HostSurface, KeyCode};
-use slot2_ui::{Splash, UiCtx};
+use slot2_ui::UiCtx;
 
+use crate::app::{App, Exit};
 use crate::Boot;
 
 pub fn run(boot: Boot) {
@@ -52,9 +53,7 @@ pub fn run(boot: Boot) {
         crate::font_dirs(&boot.root),
         Some(&boot.root.join("System/Lang")),
     );
-    let splash = Splash {
-        debug_frame: std::env::var_os("SLOT2_DEBUG_FRAME").is_some(),
-    };
+    let mut app = App::new(std::env::var_os("SLOT2_DEBUG_FRAME").is_some());
 
     loop {
         let began = Instant::now();
@@ -65,11 +64,30 @@ pub fn run(boot: Boot) {
                     code: KeyCode::Escape,
                     pressed: true,
                 } => return,
+                HostEvent::Key { code, pressed } => {
+                    if let Some(b) = slot2_input::host_map(code) {
+                        app.feed(&slot2_input::Event::Button {
+                            button: b,
+                            pressed,
+                            at: began,
+                        });
+                    }
+                }
                 _ => {}
             }
         }
 
-        splash.draw(&mut canvas, &mut ctx);
+        app.tick(began);
+        if let Some(exit) = app.exit() {
+            let action = match exit {
+                Exit::PowerOff => slot2_platform::PowerAction::PowerOff,
+                Exit::Reboot => slot2_platform::PowerAction::Reboot,
+            };
+            action.perform(false);
+            return;
+        }
+
+        app.draw(&mut canvas, &mut ctx, began);
 
         if let Err(e) = canvas.present(&mut surface) {
             eprintln!("slot2: {e}");

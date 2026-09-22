@@ -63,23 +63,73 @@ impl App {
     }
 
     pub fn feed(&mut self, event: &Event) {
-        let _ = event;
-        todo!("task 05")
+        self.state.feed(event);
+        let actions = self.gestures.feed(event);
+        for action in actions {
+            self.act(action);
+        }
     }
 
     pub fn tick(&mut self, now: Instant) {
-        let _ = now;
-        todo!("task 05")
+        let actions = self.gestures.tick(now);
+        for action in actions {
+            self.act(action);
+        }
     }
 
     fn act(&mut self, action: Action) {
-        let _ = action;
-        todo!("task 05")
+        if self.exit.is_some() {
+            return;
+        }
+        match (self.screen, action) {
+            (_, Action::Tap(slot2_input::Button::Power)) => {
+                self.exit = Some(Exit::PowerOff);
+            }
+            (Screen::Splash, Action::Hold(slot2_input::Button::Menu)) => {
+                self.screen = Screen::Power(PowerMenu::default());
+            }
+            (Screen::Power(mut menu), Action::Tap(b)) => match b {
+                slot2_input::Button::Up => {
+                    menu.up();
+                    self.screen = Screen::Power(menu);
+                }
+                slot2_input::Button::Down => {
+                    menu.down();
+                    self.screen = Screen::Power(menu);
+                }
+                slot2_input::Button::A => match menu.choice() {
+                    slot2_ui::PowerChoice::Resume => {
+                        self.screen = Screen::Splash;
+                    }
+                    slot2_ui::PowerChoice::Restart => {
+                        self.exit = Some(Exit::Reboot);
+                    }
+                    slot2_ui::PowerChoice::PowerOff => {
+                        self.exit = Some(Exit::PowerOff);
+                    }
+                },
+                slot2_input::Button::B | slot2_input::Button::Menu => {
+                    self.screen = Screen::Splash;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
     }
 
     pub fn draw(&self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, now: Instant) {
-        let _ = (canvas, ctx, now);
-        todo!("task 05")
+        self.splash.draw(canvas, ctx);
+
+        if let Some(p) = self.gestures.hold_progress(slot2_input::Button::Menu, now) {
+            let x = ctx.safe.px(0.0);
+            let y = ctx.safe.py(slot2_ui::SAFE_H as f32 - 4.0);
+            let w = slot2_ui::SAFE_W as f32 * p;
+            canvas.rect(x, y, w, 4.0, slot2_ui::splash::INK_DIM);
+        }
+
+        if let Screen::Power(menu) = self.screen {
+            menu.draw(canvas, ctx);
+        }
     }
 }
 
@@ -94,7 +144,11 @@ mod tests {
     use slot2_platform::by_target;
 
     fn ev(b: Button, pressed: bool, at: Instant) -> Event {
-        Event::Button { button: b, pressed, at }
+        Event::Button {
+            button: b,
+            pressed,
+            at,
+        }
     }
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
@@ -113,7 +167,10 @@ mod tests {
         app.tick(t + ms(700));
         assert!(matches!(app.screen, Screen::Power(_)));
         app.feed(&ev(Button::Menu, false, t + ms(800)));
-        assert!(matches!(app.screen, Screen::Power(_)), "release after hold does nothing");
+        assert!(
+            matches!(app.screen, Screen::Power(_)),
+            "release after hold does nothing"
+        );
         app.feed(&ev(Button::B, true, t + ms(900)));
         app.feed(&ev(Button::B, false, t + ms(950)));
         assert_eq!(app.screen, Screen::Splash);
@@ -199,6 +256,7 @@ mod tests {
         let t = Instant::now();
         let mut c = RecordingCanvas::new(720, 480);
         app.draw(&mut c, &mut ctx, t);
+        app.draw(&mut c, &mut ctx, t); // warm: the first frame's uploads would inflate the count
         let splash_ops = c.frame().len();
         // Half way through a MENU hold: a progress bar 320 wide at the bottom of the safe area.
         app.feed(&ev(Button::Menu, true, t));

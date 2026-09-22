@@ -31,8 +31,9 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use slot2_gfx::{FbdevSurface, GlCanvas, Surface};
-use slot2_ui::{Splash, UiCtx};
+use slot2_ui::UiCtx;
 
+use crate::app::{App, Exit};
 use crate::Boot;
 
 pub fn run(boot: Boot) {
@@ -76,12 +77,34 @@ pub fn run(boot: Boot) {
         Some(&boot.root.join("System/Lang")),
     );
 
-    let splash = Splash { debug_frame: true };
-    let deadline = Instant::now() + Duration::from_secs(300);
+    let mut source = slot2_input::EvdevSource::open_all(slot2_input::KeyMap::from_pairs(
+        slot2_input::DEFAULT_H700_KEYMAP,
+    ));
+    eprintln!("slot2: input: {} evdev devices", source.device_count());
+
+    let mut app = App::new(true);
+    let deadline = Instant::now() + Duration::from_secs(1800);
 
     while Instant::now() < deadline {
         let began = Instant::now();
-        splash.draw(&mut canvas, &mut ctx);
+
+        for ev in source.poll(began) {
+            app.feed(&ev);
+        }
+        app.tick(began);
+
+        if let Some(exit) = app.exit() {
+            let action = match exit {
+                Exit::PowerOff => slot2_platform::PowerAction::PowerOff,
+                Exit::Reboot => slot2_platform::PowerAction::Reboot,
+            };
+            if action.perform(true) {
+                return;
+            }
+            return;
+        }
+
+        app.draw(&mut canvas, &mut ctx, began);
         if let Err(e) = canvas.present(&mut surface) {
             eprintln!("slot2: {e}");
             break;

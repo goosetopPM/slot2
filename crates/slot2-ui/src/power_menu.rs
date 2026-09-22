@@ -37,7 +37,11 @@ impl PowerChoice {
     }
 }
 
-pub const ITEMS: [PowerChoice; 3] = [PowerChoice::Resume, PowerChoice::Restart, PowerChoice::PowerOff];
+pub const ITEMS: [PowerChoice; 3] = [
+    PowerChoice::Resume,
+    PowerChoice::Restart,
+    PowerChoice::PowerOff,
+];
 pub const BOX_W: f32 = 300.0;
 pub const BOX_H: f32 = 220.0;
 pub const PAD: f32 = 16.0;
@@ -76,7 +80,74 @@ impl PowerMenu {
     }
 
     pub fn draw(&self, canvas: &mut dyn Canvas, ctx: &mut UiCtx) {
-        let _ = (canvas, ctx);
-        todo!("task 05")
+        let (pw, ph) = ctx.profile.geometry.size();
+        canvas.rect(0.0, 0.0, pw as f32, ph as f32, DIM);
+
+        let (bx, by) = Self::box_origin(ctx);
+        canvas.rect(bx, by, BOX_W, BOX_H, crate::splash::BACKDROP);
+
+        let title_spans = ctx.i18n.spans("power-menu-title", &[]);
+        let title_w = crate::face::spans_width(ctx, &title_spans, crate::PX_BODY);
+        crate::draw_spans(
+            canvas,
+            ctx,
+            &title_spans,
+            crate::PX_BODY,
+            bx + (BOX_W - title_w) / 2.0,
+            by + PAD,
+            crate::splash::INK_DIM,
+        );
+
+        for (i, choice) in ITEMS.iter().enumerate() {
+            let row_y = Self::row_y(ctx, i);
+            if i == self.selected {
+                canvas.rect(
+                    bx + PAD,
+                    row_y,
+                    BOX_W - 2.0 * PAD,
+                    ROW_H,
+                    crate::splash::INK.with_alpha(0.15),
+                );
+            }
+            let label_spans = ctx.i18n.spans(choice.key(), &[]);
+            let label_w = crate::face::spans_width(ctx, &label_spans, crate::PX_TITLE);
+            let line_h = ctx.fonts.measure("", crate::PX_TITLE).line_height as f32;
+            crate::draw_spans(
+                canvas,
+                ctx,
+                &label_spans,
+                crate::PX_TITLE,
+                bx + (BOX_W - label_w) / 2.0,
+                row_y + (ROW_H - line_h) / 2.0,
+                crate::splash::INK,
+            );
+        }
+
+        let hint_select = ctx.i18n.spans("hint-select", &[]);
+        let hint_back = ctx.i18n.spans("hint-back", &[]);
+        let w_select = crate::face::spans_width(ctx, &hint_select, crate::PX_HINT);
+        let w_back = crate::face::spans_width(ctx, &hint_back, crate::PX_HINT);
+        let total_hint_w = w_select + crate::PX_HINT + w_back;
+        let hint_x = bx + (BOX_W - total_hint_w) / 2.0;
+        let hint_y = by + BOX_H - PAD - crate::PX_HINT;
+
+        crate::draw_spans(
+            canvas,
+            ctx,
+            &hint_select,
+            crate::PX_HINT,
+            hint_x,
+            hint_y,
+            crate::splash::INK_DIM,
+        );
+        crate::draw_spans(
+            canvas,
+            ctx,
+            &hint_back,
+            crate::PX_HINT,
+            hint_x + w_select + crate::PX_HINT,
+            hint_y,
+            crate::splash::INK_DIM,
+        );
     }
 }

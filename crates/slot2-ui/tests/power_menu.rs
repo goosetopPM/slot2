@@ -30,10 +30,9 @@ fn navigation_wraps_and_choice_follows() {
 #[test]
 fn draws_dim_box_three_labels_and_a_highlight_inside_the_safe_area() {
     for target in ["rgsp", "rg35xxsp", "rgcubexx"] {
-        let mut c = RecordingCanvas::new(1, 1);
         let mut ctx = ctx(target, "ko");
         let (w, h) = ctx.profile.geometry.size();
-        c = RecordingCanvas::new(w, h);
+        let mut c = RecordingCanvas::new(w, h);
         let mut m = PowerMenu::default();
         m.down(); // Restart selected
         m.draw(&mut c, &mut ctx);
@@ -43,14 +42,27 @@ fn draws_dim_box_three_labels_and_a_highlight_inside_the_safe_area() {
         // First draw is the full-panel dim.
         let first_rect = ops.iter().find(|o| matches!(o, Op::Rect { .. })).unwrap();
         match first_rect {
-            Op::Rect { x, y, w: rw, h: rh, color } => {
-                assert_eq!((*x, *y, *rw, *rh), (0.0, 0.0, w as f32, h as f32), "{target}: dim covers panel");
+            Op::Rect {
+                x,
+                y,
+                w: rw,
+                h: rh,
+                color,
+            } => {
+                assert_eq!(
+                    (*x, *y, *rw, *rh),
+                    (0.0, 0.0, w as f32, h as f32),
+                    "{target}: dim covers panel"
+                );
                 assert_eq!(*color, DIM);
             }
             _ => unreachable!(),
         }
         let (bx, by) = PowerMenu::box_origin(&ctx);
-        assert!(ctx.safe.contains(bx, by, BOX_W, BOX_H), "{target}: box in safe area");
+        assert!(
+            ctx.safe.contains(bx, by, BOX_W, BOX_H),
+            "{target}: box in safe area"
+        );
         // Highlight on row 1.
         let row1 = PowerMenu::row_y(&ctx, 1);
         assert!(
@@ -95,5 +107,7 @@ fn second_draw_uploads_nothing() {
     m.draw(&mut c, &mut ctx);
     let n = c.ops.len();
     m.draw(&mut c, &mut ctx);
-    assert!(!c.ops[n..].iter().any(|o| matches!(o, Op::UploadAlpha8 { .. })));
+    assert!(!c.ops[n..]
+        .iter()
+        .any(|o| matches!(o, Op::UploadAlpha8 { .. })));
 }

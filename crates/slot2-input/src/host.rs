@@ -20,6 +20,25 @@ pub use winit::keyboard::KeyCode;
 use crate::Button;
 
 pub fn host_map(code: KeyCode) -> Option<Button> {
-    let _ = code;
-    todo!("task 05")
+    match code {
+        KeyCode::ArrowUp => Some(Button::Up),
+        KeyCode::ArrowDown => Some(Button::Down),
+        KeyCode::ArrowLeft => Some(Button::Left),
+        KeyCode::ArrowRight => Some(Button::Right),
+        KeyCode::KeyX => Some(Button::A),
+        KeyCode::KeyZ => Some(Button::B),
+        KeyCode::KeyS => Some(Button::X),
+        KeyCode::KeyA => Some(Button::Y),
+        KeyCode::KeyQ => Some(Button::L1),
+        KeyCode::KeyW => Some(Button::R1),
+        KeyCode::Digit1 => Some(Button::L2),
+        KeyCode::Digit2 => Some(Button::R2),
+        KeyCode::Enter => Some(Button::Start),
+        KeyCode::ShiftRight => Some(Button::Select),
+        KeyCode::KeyM | KeyCode::Backspace => Some(Button::Menu),
+        KeyCode::PageUp => Some(Button::VolUp),
+        KeyCode::PageDown => Some(Button::VolDown),
+        KeyCode::KeyP => Some(Button::Power),
+        _ => None,
+    }
 }

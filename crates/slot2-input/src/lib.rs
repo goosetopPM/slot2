@@ -41,10 +41,21 @@ pub enum Axis {
 /// clock).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
-    Button { button: Button, pressed: bool, at: Instant },
-    Axis { axis: Axis, value: f32, at: Instant },
+    Button {
+        button: Button,
+        pressed: bool,
+        at: Instant,
+    },
+    Axis {
+        axis: Axis,
+        value: f32,
+        at: Instant,
+    },
     /// SP-style lid switch. `closed == true` when shut.
-    Lid { closed: bool, at: Instant },
+    Lid {
+        closed: bool,
+        at: Instant,
+    },
 }
 
 impl Event {
@@ -66,7 +77,9 @@ pub struct State {
 impl State {
     pub fn feed(&mut self, e: &Event) {
         match *e {
-            Event::Button { button, pressed, .. } => {
+            Event::Button {
+                button, pressed, ..
+            } => {
                 let bit = 1u32 << button as u32;
                 if pressed {
                     self.pressed |= bit;
@@ -93,6 +106,9 @@ impl State {
 
     /// Every pressed button, in `Button::ALL` order.
     pub fn held(&self) -> Vec<Button> {
-        Button::ALL.into_iter().filter(|b| self.pressed(*b)).collect()
+        Button::ALL
+            .into_iter()
+            .filter(|b| self.pressed(*b))
+            .collect()
     }
 }
