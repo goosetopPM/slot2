@@ -1,0 +1,19 @@
+# LF everywhere, on every platform. Dockerfiles, shell scripts and taskfiles are read inside
+# Linux containers and on the device, where a stray CR breaks them.
+* text=auto eol=lf
+
+# Binary assets never get touched.
+*.png binary
+*.webp binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.so binary
+*.gba binary
+*.gb binary
+*.gbc binary
+*.nes binary
+*.sfc binary
+*.smc binary
+*.md.bin binary
+*.sms binary

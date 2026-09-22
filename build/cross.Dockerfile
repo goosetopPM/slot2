@@ -12,10 +12,14 @@
 
 FROM rust:1-bullseye
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-        cmake make git file pkg-config ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Bullseye is at the end of LTS and its security mirror sometimes serves an index whose
+# packages are already gone (404 on fetch). A build box does not need security updates, so
+# on failure drop that source and try again from main alone.
+RUN set -eux; \
+    pkgs="gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake make git file pkg-config ca-certificates"; \
+    install() { apt-get update && apt-get install -y --no-install-recommends -o Acquire::Retries=3 $pkgs; }; \
+    install || { sed -i '/security/d' /etc/apt/sources.list; rm -rf /var/lib/apt/lists/*; install; }; \
+    rm -rf /var/lib/apt/lists/*
 
 RUN rustup target add aarch64-unknown-linux-gnu \
     && rustup component add rustfmt clippy
