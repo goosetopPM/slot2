@@ -1,9 +1,25 @@
-﻿[package]
+[package]
 name = "slot2-gfx"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Surface (fbdev EGL on device, glutin on host), compositor, scale policy, shader presets, overlays"
+description = "Surface (fbdev EGL on device, glutin on host), 2D canvas over GL ES 2, letterbox fit, read-back"
+
+[features]
+default = ["host"]
+# A desktop window via winit + glutin. The device has neither: it draws on /dev/fb0 through
+# EGL loaded at runtime, so none of this is compiled in for it.
+host = ["dep:winit", "dep:glutin", "dep:glutin-winit", "dep:raw-window-handle"]
+device = []
 
 [dependencies]
+gl = "0.14"
+libloading = "0.8"
+winit = { version = "0.30", optional = true }
+glutin = { version = "0.32", optional = true }
+glutin-winit = { version = "0.5", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
+[dev-dependencies]
+png = "0.17"
