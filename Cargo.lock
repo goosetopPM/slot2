@@ -1513,6 +1513,9 @@ dependencies = [
 [[package]]
 name = "slot2-store"
 version = "0.1.0"
+dependencies = [
+ "png",
+]
 
 [[package]]
 name = "slot2-text"
