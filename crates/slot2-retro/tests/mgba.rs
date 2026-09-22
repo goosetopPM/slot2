@@ -4,8 +4,17 @@
 //! stays green; with it, these are the acceptance tests for M1-2.
 
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use slot2_retro::{Core, Env, JoypadMask, Memory, PixelFormat};
+
+/// libretro cores are global state and the host allows one instance per library, so the
+/// tests must not overlap: each takes this lock first.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -54,6 +63,7 @@ fn load(name: &str) -> Option<Core> {
 
 #[test]
 fn loads_and_reports_itself() {
+    let _serial = serial();
     let Some(core) = load("info") else { return };
     let (lib, ver) = core.name();
     assert!(lib.to_lowercase().contains("mgba"), "{lib}");
@@ -61,17 +71,30 @@ fn loads_and_reports_itself() {
     let av = core.av_info();
     assert_eq!((av.base_width, av.base_height), (240, 160));
     assert!((av.fps - 59.727).abs() < 0.1, "{}", av.fps);
-    assert!(av.sample_rate > 30_000.0 && av.sample_rate < 50_000.0, "{}", av.sample_rate);
-    assert!(matches!(core.pixel_format(), PixelFormat::Xrgb8888 | PixelFormat::Rgb565));
+    assert!(
+        av.sample_rate > 30_000.0 && av.sample_rate < 50_000.0,
+        "{}",
+        av.sample_rate
+    );
+    assert!(matches!(
+        core.pixel_format(),
+        PixelFormat::Xrgb8888 | PixelFormat::Rgb565
+    ));
     let log = core.env_log();
-    assert!(log.answered.contains(&10), "SET_PIXEL_FORMAT answered: {log:?}");
+    assert!(
+        log.answered.contains(&10),
+        "SET_PIXEL_FORMAT answered: {log:?}"
+    );
     assert!(log.answered.contains(&9), "GET_SYSTEM_DIRECTORY answered");
     assert!(!core.need_fullpath(), "mGBA takes the rom in memory");
 }
 
 #[test]
 fn runs_frames_and_delivers_video_and_audio() {
-    let Some(mut core) = load("frames") else { return };
+    let _serial = serial();
+    let Some(mut core) = load("frames") else {
+        return;
+    };
     assert!(core.frame().is_none());
     for _ in 0..60 {
         core.run();
@@ -86,9 +109,16 @@ fn runs_frames_and_delivers_video_and_audio() {
     // The test rom prints results on a coloured background: the picture is not one flat
     // colour after a second.
     let first = f.rgb(0, 0);
-    assert!((0..160).any(|y| (0..240).any(|x| f.rgb(x, y) != first)), "flat frame");
+    assert!(
+        (0..160).any(|y| (0..240).any(|x| f.rgb(x, y) != first)),
+        "flat frame"
+    );
     let audio = core.take_audio();
-    assert!(audio.len() >= 2 * 500, "stereo samples after 60 frames: {}", audio.len());
+    assert!(
+        audio.len() >= 2 * 500,
+        "stereo samples after 60 frames: {}",
+        audio.len()
+    );
     assert!(core.take_audio().is_empty(), "take drains");
     core.run();
     assert!(!core.take_audio().is_empty());
@@ -96,8 +126,16 @@ fn runs_frames_and_delivers_video_and_audio() {
 
 #[test]
 fn input_reaches_the_core_without_crashing() {
-    let Some(mut core) = load("input") else { return };
-    core.set_input(0, JoypadMask::default().with(JoypadMask::A).with(JoypadMask::START));
+    let _serial = serial();
+    let Some(mut core) = load("input") else {
+        return;
+    };
+    core.set_input(
+        0,
+        JoypadMask::default()
+            .with(JoypadMask::A)
+            .with(JoypadMask::START),
+    );
     core.set_input(1, JoypadMask::default());
     for _ in 0..10 {
         core.run();
@@ -109,7 +147,10 @@ fn input_reaches_the_core_without_crashing() {
 
 #[test]
 fn save_states_round_trip() {
-    let Some(mut core) = load("state") else { return };
+    let _serial = serial();
+    let Some(mut core) = load("state") else {
+        return;
+    };
     for _ in 0..30 {
         core.run();
     }
@@ -126,13 +167,19 @@ fn save_states_round_trip() {
     // Rendering after a restore may differ by a frame of timing; compare the state itself.
     let again = core.serialize().unwrap();
     assert_eq!(again.len(), size);
-    assert!(core.unserialize(&state[..size / 2]).is_err(), "truncated state is refused");
+    assert!(
+        core.unserialize(&state[..size / 2]).is_err(),
+        "truncated state is refused"
+    );
     let _ = snap;
 }
 
 #[test]
 fn memory_regions_and_reset() {
-    let Some(mut core) = load("memory") else { return };
+    let _serial = serial();
+    let Some(mut core) = load("memory") else {
+        return;
+    };
     core.run();
     // arm.gba has no battery save, so SAVE_RAM may be absent or empty; that must be a
     // clean answer either way, and system RAM must be readable.
@@ -142,7 +189,10 @@ fn memory_regions_and_reset() {
         assert!(!sys.is_empty());
         let mut wrong = sys.clone();
         wrong.push(0);
-        assert!(core.write_memory(Memory::SystemRam, &wrong).is_err(), "size mismatch refused");
+        assert!(
+            core.write_memory(Memory::SystemRam, &wrong).is_err(),
+            "size mismatch refused"
+        );
     }
     assert!(core.memory(Memory::Rtc).is_none() || true);
     core.reset();
@@ -152,12 +202,25 @@ fn memory_regions_and_reset() {
 
 #[test]
 fn options_are_declared_and_settable() {
-    let Some(mut core) = load("options") else { return };
+    let _serial = serial();
+    let Some(mut core) = load("options") else {
+        return;
+    };
     let opts = core.options();
     assert!(opts.len() > 5, "mGBA declares many options: {}", opts.len());
-    let skip = opts.iter().find(|o| o.key == "mgba_skip_bios").expect("mgba_skip_bios exists");
-    assert!(skip.values.iter().any(|v| v == "ON") && skip.values.iter().any(|v| v == "OFF"), "{skip:?}");
-    assert_eq!(core.option("mgba_skip_bios").as_deref(), Some("ON"), "preset from Env applied");
+    let skip = opts
+        .iter()
+        .find(|o| o.key == "mgba_skip_bios")
+        .expect("mgba_skip_bios exists");
+    assert!(
+        skip.values.iter().any(|v| v == "ON") && skip.values.iter().any(|v| v == "OFF"),
+        "{skip:?}"
+    );
+    assert_eq!(
+        core.option("mgba_skip_bios").as_deref(),
+        Some("ON"),
+        "preset from Env applied"
+    );
     core.set_option("mgba_skip_bios", "OFF");
     assert_eq!(core.option("mgba_skip_bios").as_deref(), Some("OFF"));
     assert_eq!(core.option("no_such_option"), None);
@@ -168,15 +231,25 @@ fn options_are_declared_and_settable() {
 
 #[test]
 fn bad_inputs_are_errors_not_crashes() {
+    let _serial = serial();
     let Some(core) = core_path() else { return };
-    let e = Core::load(&repo().join("vendor/does_not_exist.dll"), &rom(), env("bad1")).unwrap_err();
+    let e = Core::load(
+        &repo().join("vendor/does_not_exist.dll"),
+        &rom(),
+        env("bad1"),
+    )
+    .unwrap_err();
     assert!(matches!(e, slot2_retro::Error::Load(_)), "{e}");
     let e = Core::load(&core, &repo().join("assets/test/missing.gba"), env("bad2")).unwrap_err();
-    assert!(matches!(e, slot2_retro::Error::Io(_) | slot2_retro::Error::Game(_)), "{e}");
+    assert!(
+        matches!(e, slot2_retro::Error::Io(_) | slot2_retro::Error::Game(_)),
+        "{e}"
+    );
 }
 
 #[test]
 fn a_core_can_be_loaded_again_after_drop() {
+    let _serial = serial();
     let Some(mut a) = load("twice-a") else { return };
     a.run();
     drop(a);
@@ -187,6 +260,7 @@ fn a_core_can_be_loaded_again_after_drop() {
 
 #[test]
 fn same_library_twice_at_once_is_busy() {
+    let _serial = serial();
     let Some(a) = load("busy-a") else { return };
     let e = Core::load(&core_path().unwrap(), &rom(), env("busy-b")).unwrap_err();
     assert!(matches!(e, slot2_retro::Error::Busy(_)), "{e}");
@@ -195,6 +269,7 @@ fn same_library_twice_at_once_is_busy() {
 
 #[test]
 fn frame_conversion_expands_channels_correctly() {
+    let _serial = serial();
     use slot2_retro::Frame;
     let f = Frame {
         width: 2,
@@ -210,11 +285,16 @@ fn frame_conversion_expands_channels_correctly() {
         height: 2,
         pitch: 8, // padded rows
         format: PixelFormat::Xrgb8888,
-        data: vec![0x11, 0x22, 0x33, 0x00, 9, 9, 9, 9, 0xAA, 0xBB, 0xCC, 0x00, 9, 9, 9, 9],
+        data: vec![
+            0x11, 0x22, 0x33, 0x00, 9, 9, 9, 9, 0xAA, 0xBB, 0xCC, 0x00, 9, 9, 9, 9,
+        ],
     };
     assert_eq!(f.rgb(0, 0), [0x33, 0x22, 0x11]);
     assert_eq!(f.rgb(0, 1), [0xCC, 0xBB, 0xAA]);
-    assert_eq!(f.to_rgba8(), vec![0x33, 0x22, 0x11, 255, 0xCC, 0xBB, 0xAA, 255]);
+    assert_eq!(
+        f.to_rgba8(),
+        vec![0x33, 0x22, 0x11, 255, 0xCC, 0xBB, 0xAA, 255]
+    );
     let f = Frame {
         width: 1,
         height: 1,

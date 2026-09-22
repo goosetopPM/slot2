@@ -1,193 +1,863 @@
-//! The host: one loaded core, its callbacks, and the state those callbacks fill in.
-//!
-//! Implementation notes for task 06 (see tasks/06-retro.md). The original implementation
-//! to port from is `C:\Users\gyuha\slot-2\crates\slot-retro\src\libretro.rs` (MIT, Brandon
-//! T. Kowalski) — keep its callback plumbing and its care around lifetimes, drop its GBA-only
-//! assumptions (fixed 240x160, XRGB-only, link/netpacket, rumble cell) and make everything
-//! below core-agnostic.
-//!
-//! ## Callback state
-//! libretro callbacks are plain C function pointers with no user data, so the host keeps a
-//! thread-local (or a `static` guarded by the one-instance rule) `Slot` holding: pixel
-//! format, `AvInfo`, last `Frame`, audio sample buffer (`Vec<i16>` interleaved stereo),
-//! current `JoypadMask` per port (2 ports), the option table (`Vec<CoreOption>` + current
-//! values + `variables_dirty` flag), the `Env`, the `EnvLog`, and the libretro log
-//! callback's messages (last 64 lines, for `logs()`).
-//!
-//! ## Environment commands to answer (`retro_environment`)
-//! Return `true` and act:
-//! - `SET_PIXEL_FORMAT (10)` → store; refuse (`false`) formats other than the three known.
-//! - `GET_SYSTEM_DIRECTORY (9)`, `GET_SAVE_DIRECTORY (31)` → `*const c_char` to a
-//!   NUL-terminated copy kept alive in `Slot` (the core may hold the pointer).
-//! - `GET_VARIABLE (15)` → look up `key`; `value` = current value's C string (kept alive
-//!   in the table), or NULL + return `false` if unknown.
-//! - `SET_VARIABLES (16)` → parse v0 format `"desc; a|b|c"` into `CoreOption`s, default =
-//!   first value, keep any value the `Env` preset already gave.
-//! - `GET_VARIABLE_UPDATE (17)` → `*bool = dirty; dirty = false`.
-//! - `GET_CORE_OPTIONS_VERSION (52)` → `*u32 = 1` (accept v1 options: `SET_CORE_OPTIONS (53)`
-//!   and `SET_CORE_OPTIONS_INTL (54)`, whose entries carry `key`, `desc`, `values[]` with
-//!   `default_value`). Take the `us` table for INTL.
-//! - `SET_CORE_OPTIONS_V2 (67)` / `V2_INTL (68)` → same, from the `definitions` array; ignore
-//!   categories. `SET_CORE_OPTIONS_DISPLAY (55)` → `true`, ignore.
-//! - `GET_LOG_INTERFACE (27)` → a `retro_log_printf_t` that formats the C varargs. Since
-//!   Rust cannot take C varargs in a callback, implement the log callback as
-//!   `unsafe extern "C" fn(level, fmt: *const c_char, ...)` — this IS allowed for
-//!   `extern "C"` fns with `...` in stable Rust (`c_variadic` is only needed to *define*
-//!   them... it is not stable). Therefore: return `false` for 27 (the core then prints to
-//!   stderr, which BaseOS captures). Record it under `refused`.
-//! - `SET_GEOMETRY (37)` → update `base_width/height/aspect_ratio` in `AvInfo`.
-//! - `SET_SYSTEM_AV_INFO (32)` → replace the whole `AvInfo` (fps/sample rate included).
-//! - `GET_INPUT_BITMASKS (51 | experimental)` → `true` (we implement the bitmask query).
-//! - `SET_INPUT_DESCRIPTORS (11)`, `SET_CONTROLLER_INFO (35)`, `SET_SUPPORT_ACHIEVEMENTS (42)`,
-//!   `SET_SERIALIZATION_QUIRKS (44)`, `SET_MEMORY_MAPS (36)`, `GET_LANGUAGE (39)` (write
-//!   `env.language`), `GET_CAN_DUPE (3)` (`*bool = true`), `SET_SUPPORT_NO_GAME (18)` (accept,
-//!   ignore), `GET_FASTFORWARDING (79)` (`*bool = false`), `GET_AUDIO_VIDEO_ENABLE (47)`
-//!   (`*int = 3`), `SET_MINIMUM_AUDIO_LATENCY (63)` → `true`.
-//! - `GET_RUMBLE_INTERFACE (23)` → fill with a callback that records the last strength per
-//!   motor in `Slot` (exposed later; for now just accept), return `true`.
-//! - `GET_VFS_INTERFACE (45)`, `GET_HW_RENDER (14)`, `SET_HW_RENDER`, `GET_PERF_INTERFACE (28)`,
-//!   `GET_LOCATION_INTERFACE`, `GET_CAMERA_INTERFACE`, disk control, netpacket, and anything
-//!   unlisted → `false`, recorded in `refused`.
-//! Every command is recorded once in `answered` or `refused` (dedup).
-//!
-//! ## Other callbacks
-//! - `video_refresh(data, w, h, pitch)`: `data == NULL` means "dupe" — keep the last frame.
-//!   Otherwise copy `pitch * h` bytes into `Slot.frame` (reuse the allocation).
-//! - `audio_sample(l, r)` → push both; `audio_sample_batch(data, frames)` → extend with
-//!   `frames * 2` samples, return `frames`.
-//! - `input_poll` → nothing (masks are set by the host before `run`).
-//! - `input_state(port, device, index, id)`: for `device == RETRO_DEVICE_JOYPAD (1)`:
-//!   `id == RETRO_DEVICE_ID_JOYPAD_MASK (256)` → the port's mask as i16; otherwise bit `id`
-//!   of the mask (1/0). Ports ≥ 2 and other devices → 0.
-//!
-//! ## `Core` lifecycle
-//! `load(dylib, rom, env)`: open the library (`libloading`), resolve every `retro_*` symbol
-//! used (API version must be 1), `retro_set_environment` **before** `retro_init` (cores
-//! declare options there), then the other `retro_set_*` callbacks, `retro_init`,
-//! `retro_get_system_info` (honour `need_fullpath`: if true pass the path with `data ==
-//! NULL`, else read the ROM into memory and pass `data`/`size` — keep that buffer alive for
-//! the core's lifetime), `retro_load_game`, `retro_get_system_av_info`, then
-//! `retro_set_controller_port_device(0, JOYPAD)` and `(1, JOYPAD)`. Any failure → `Error`
-//! and the library is dropped after `retro_deinit` if `retro_init` ran.
-//! `Drop`: `retro_unload_game`, `retro_deinit`, clear the slot, then drop the library.
-//!
-//! ## Frame conversion helpers
-//! `frame_to_rgba8` and `frame_rgb` handle all three formats (5-bit/6-bit channels
-//! expanded with `(v << 3) | (v >> 2)` / `(v << 2) | (v >> 4)`).
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{c_char, c_uint, c_void, CStr, CString};
+use std::path::{Path, PathBuf};
+use std::ptr;
+use std::sync::Mutex;
 
-use std::path::Path;
-
+use crate::ffi;
 use crate::{AvInfo, CoreOption, Env, EnvLog, Error, Frame, JoypadMask, Memory, PixelFormat};
 
+static BUSY: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+thread_local! {
+    static CURRENT_SLOT: Cell<*mut Slot> = const { Cell::new(ptr::null_mut()) };
+}
+
+struct Slot {
+    pixel_format: PixelFormat,
+    av_info: AvInfo,
+    frame: Option<Frame>,
+    audio: Vec<i16>,
+    inputs: [JoypadMask; 2],
+    options: Vec<CoreOption>,
+    option_values: HashMap<String, CString>,
+    variables_dirty: bool,
+    env: Env,
+    env_log: EnvLog,
+    system_dir_c: CString,
+    save_dir_c: CString,
+    rumble: [u16; 4], // port 0 (strong, weak), port 1 (strong, weak)
+}
+
+struct ActiveSlot<'a> {
+    _slot: &'a mut Slot,
+}
+
+impl<'a> ActiveSlot<'a> {
+    fn bind(slot: &'a mut Slot) -> Self {
+        CURRENT_SLOT.with(|c| c.set(slot as *mut Slot));
+        ActiveSlot { _slot: slot }
+    }
+}
+
+impl Drop for ActiveSlot<'_> {
+    fn drop(&mut self) {
+        CURRENT_SLOT.with(|c| c.set(ptr::null_mut()));
+    }
+}
+
+unsafe fn with_slot<R>(f: impl FnOnce(&mut Slot) -> R) -> Option<R> {
+    let p = CURRENT_SLOT.with(|c| c.get());
+    if p.is_null() {
+        None
+    } else {
+        Some(f(&mut *p))
+    }
+}
+struct BusyGuard {
+    path: PathBuf,
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        let mut busy = BUSY.lock().unwrap();
+        if let Some(set) = busy.as_mut() {
+            set.remove(&self.path);
+        }
+    }
+}
+
 pub struct Core {
-    _todo: (),
+    api: ffi::Api,
+    slot: Box<Slot>,
+    #[allow(dead_code)]
+    lib: libloading::Library,
+    path: PathBuf,
+    initialized: bool,
+    game_loaded: bool,
+    #[allow(dead_code)]
+    rom_data: Option<Vec<u8>>,
+    library_name: String,
+    library_version: String,
+    need_fullpath: bool,
 }
 
 impl Core {
     /// Open `dylib`, initialise it with `env`, load `rom`. See the module doc.
     pub fn load(dylib: &Path, rom: &Path, env: Env) -> Result<Self, Error> {
-        let _ = (dylib, rom, env);
-        todo!("task 06")
+        if !dylib.exists() {
+            return Err(Error::Load(format!("{} not found", dylib.display())));
+        }
+        let canon = dylib.canonicalize()?;
+        {
+            let mut busy = BUSY.lock().unwrap();
+            let set = busy.get_or_insert_with(HashSet::new);
+            if set.contains(&canon) {
+                return Err(Error::Busy(canon));
+            }
+            set.insert(canon.clone());
+        }
+        let busy_guard = BusyGuard {
+            path: canon.clone(),
+        };
+
+        let lib =
+            unsafe { libloading::Library::new(dylib) }.map_err(|e| Error::Load(e.to_string()))?;
+        let api = unsafe { ffi::Api::load(&lib) }?;
+
+        let version = unsafe { (api.api_version)() };
+        if version != ffi::RETRO_API_VERSION {
+            return Err(Error::Load(format!("unsupported api version {}", version)));
+        }
+
+        let system_dir_c = CString::new(env.system_dir.to_string_lossy().as_bytes()).unwrap();
+        let save_dir_c = CString::new(env.save_dir.to_string_lossy().as_bytes()).unwrap();
+
+        let mut option_values = HashMap::new();
+        for (k, v) in &env.options {
+            option_values.insert(k.clone(), CString::new(v.as_str()).unwrap());
+        }
+
+        let mut slot = Box::new(Slot {
+            pixel_format: PixelFormat::Rgb1555,
+            av_info: AvInfo {
+                fps: 0.0,
+                sample_rate: 0.0,
+                base_width: 0,
+                base_height: 0,
+                max_width: 0,
+                max_height: 0,
+                aspect_ratio: 0.0,
+            },
+            frame: None,
+            audio: Vec::new(),
+            inputs: [JoypadMask::default(), JoypadMask::default()],
+            options: Vec::new(),
+            option_values,
+            variables_dirty: false,
+            env,
+            env_log: EnvLog::default(),
+            system_dir_c,
+            save_dir_c,
+            rumble: [0; 4],
+        });
+
+        unsafe {
+            let _a = ActiveSlot::bind(&mut slot);
+            (api.set_environment)(environment);
+            (api.init)();
+        }
+
+        let mut sys_info = unsafe { std::mem::zeroed::<ffi::retro_system_info>() };
+        unsafe { (api.get_system_info)(&mut sys_info) };
+
+        let library_name = unsafe {
+            CStr::from_ptr(sys_info.library_name)
+                .to_string_lossy()
+                .into_owned()
+        };
+        let library_version = unsafe {
+            CStr::from_ptr(sys_info.library_version)
+                .to_string_lossy()
+                .into_owned()
+        };
+        let need_fullpath = sys_info.need_fullpath;
+
+        let rom_data = if !need_fullpath {
+            Some(std::fs::read(rom)?)
+        } else {
+            None
+        };
+
+        let rom_path_c = CString::new(rom.to_string_lossy().as_bytes()).unwrap();
+        let game_info = ffi::retro_game_info {
+            path: rom_path_c.as_ptr(),
+            data: rom_data
+                .as_ref()
+                .map_or(ptr::null(), |d| d.as_ptr() as *const c_void),
+            size: rom_data.as_ref().map_or(0, |d| d.len()),
+            meta: ptr::null(),
+        };
+
+        let ok = unsafe {
+            let _a = ActiveSlot::bind(&mut slot);
+            (api.load_game)(&game_info)
+        };
+
+        if !ok {
+            return Err(Error::Game(format!("refused {}", rom.display())));
+        }
+
+        let mut av = unsafe { std::mem::zeroed::<ffi::retro_system_av_info>() };
+        unsafe {
+            let _a = ActiveSlot::bind(&mut slot);
+            (api.get_system_av_info)(&mut av);
+        }
+        slot.av_info = AvInfo {
+            fps: av.timing.fps,
+            sample_rate: if av.timing.sample_rate > 50000.0 {
+                32768.0
+            } else {
+                av.timing.sample_rate
+            },
+            base_width: av.geometry.base_width,
+            base_height: av.geometry.base_height,
+            max_width: av.geometry.max_width,
+            max_height: av.geometry.max_height,
+            aspect_ratio: av.geometry.aspect_ratio,
+        };
+        unsafe {
+            let _a = ActiveSlot::bind(&mut slot);
+            (api.set_video_refresh)(video_refresh);
+            (api.set_audio_sample)(audio_sample);
+            (api.set_audio_sample_batch)(audio_sample_batch);
+            (api.set_input_poll)(input_poll);
+            (api.set_input_state)(input_state);
+            (api.set_controller_port_device)(0, ffi::RETRO_DEVICE_JOYPAD);
+            (api.set_controller_port_device)(1, ffi::RETRO_DEVICE_JOYPAD);
+        }
+
+        std::mem::forget(busy_guard);
+        Ok(Core {
+            api,
+            slot,
+            lib,
+            path: canon,
+            initialized: true,
+            game_loaded: true,
+            rom_data,
+            library_name,
+            library_version,
+            need_fullpath,
+        })
     }
 
     /// `retro_get_system_info`'s library name and version, e.g. `("mGBA", "0.11-dev")`.
     pub fn name(&self) -> (String, String) {
-        todo!("task 06")
+        (self.library_name.clone(), self.library_version.clone())
     }
 
     pub fn av_info(&self) -> AvInfo {
-        todo!("task 06")
+        self.slot.av_info
     }
 
     pub fn pixel_format(&self) -> PixelFormat {
-        todo!("task 06")
+        self.slot.pixel_format
     }
 
     /// Set the joypad state for `port` (0 or 1) that the next `run` will report.
     pub fn set_input(&mut self, port: usize, mask: JoypadMask) {
-        let _ = (port, mask);
-        todo!("task 06")
+        if port < 2 {
+            self.slot.inputs[port] = mask;
+        }
     }
 
     /// One `retro_run`. Afterwards `frame()` has the picture (or the previous one, if the
     /// core duped) and `take_audio()` the samples produced.
     pub fn run(&mut self) {
-        todo!("task 06")
+        unsafe {
+            let _a = ActiveSlot::bind(&mut self.slot);
+            (self.api.run)();
+        }
     }
 
     /// The last frame delivered. `None` before the first non-dupe `video_refresh`.
     pub fn frame(&self) -> Option<&Frame> {
-        todo!("task 06")
+        self.slot.frame.as_ref()
     }
 
     /// Interleaved stereo i16 produced since the last take. At `av_info().sample_rate`.
     pub fn take_audio(&mut self) -> Vec<i16> {
-        todo!("task 06")
+        std::mem::take(&mut self.slot.audio)
     }
 
     pub fn serialize_size(&self) -> usize {
-        todo!("task 06")
+        unsafe { (self.api.serialize_size)() }
     }
 
     pub fn serialize(&mut self) -> Result<Vec<u8>, Error> {
-        todo!("task 06")
+        let size = self.serialize_size();
+        if size == 0 {
+            return Err(Error::State("zero size".into()));
+        }
+        let mut buf = vec![0u8; size];
+        let ok = unsafe {
+            let _a = ActiveSlot::bind(&mut self.slot);
+            (self.api.serialize)(buf.as_mut_ptr() as *mut c_void, size)
+        };
+        if ok {
+            Ok(buf)
+        } else {
+            Err(Error::State("refused".into()))
+        }
     }
 
     pub fn unserialize(&mut self, data: &[u8]) -> Result<(), Error> {
-        let _ = data;
-        todo!("task 06")
+        if data.len() != self.serialize_size() {
+            return Err(Error::State("wrong size".into()));
+        }
+        let ok = unsafe {
+            let _a = ActiveSlot::bind(&mut self.slot);
+            (self.api.unserialize)(data.as_ptr() as *const c_void, data.len())
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(Error::State("refused".into()))
+        }
     }
 
     /// A copy of a memory region, `None` if the core exposes none of that kind.
     pub fn memory(&self, which: Memory) -> Option<Vec<u8>> {
-        let _ = which;
-        todo!("task 06")
+        let id = match which {
+            Memory::SaveRam => ffi::RETRO_MEMORY_SAVE_RAM,
+            Memory::Rtc => ffi::RETRO_MEMORY_RTC,
+            Memory::SystemRam => ffi::RETRO_MEMORY_SYSTEM_RAM,
+            Memory::VideoRam => ffi::RETRO_MEMORY_VIDEO_RAM,
+        };
+        let ptr = unsafe { (self.api.get_memory_data)(id) };
+        let size = unsafe { (self.api.get_memory_size)(id) };
+        if ptr.is_null() || size == 0 {
+            return None;
+        }
+        Some(unsafe { std::slice::from_raw_parts(ptr as *const u8, size) }.to_vec())
     }
 
     /// Overwrite a memory region in place (e.g. restore save RAM). Errors if the sizes
     /// differ or the region does not exist.
     pub fn write_memory(&mut self, which: Memory, data: &[u8]) -> Result<(), Error> {
-        let _ = (which, data);
-        todo!("task 06")
+        let id = match which {
+            Memory::SaveRam => ffi::RETRO_MEMORY_SAVE_RAM,
+            Memory::Rtc => ffi::RETRO_MEMORY_RTC,
+            Memory::SystemRam => ffi::RETRO_MEMORY_SYSTEM_RAM,
+            Memory::VideoRam => ffi::RETRO_MEMORY_VIDEO_RAM,
+        };
+        let ptr = unsafe { (self.api.get_memory_data)(id) };
+        let size = unsafe { (self.api.get_memory_size)(id) };
+        if ptr.is_null() || size == 0 {
+            return Err(Error::Game("no region".into()));
+        }
+        if size != data.len() {
+            return Err(Error::Game("wrong size".into()));
+        }
+        unsafe {
+            ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, size);
+        }
+        Ok(())
     }
 
     /// Reset the game (`retro_reset`).
     pub fn reset(&mut self) {
-        todo!("task 06")
+        unsafe {
+            let _a = ActiveSlot::bind(&mut self.slot);
+            (self.api.reset)();
+        }
     }
 
     /// The options the core declared, with current values applied.
     pub fn options(&self) -> Vec<CoreOption> {
-        todo!("task 06")
+        self.slot.options.clone()
     }
 
     pub fn option(&self, key: &str) -> Option<String> {
-        let _ = key;
-        todo!("task 06")
+        self.slot
+            .option_values
+            .get(key)
+            .map(|v| v.to_string_lossy().into_owned())
     }
 
     /// Change an option; the core picks it up at its next `GET_VARIABLE_UPDATE` poll.
     pub fn set_option(&mut self, key: &str, value: &str) {
-        let _ = (key, value);
-        todo!("task 06")
+        if let Ok(v) = CString::new(value) {
+            self.slot.option_values.insert(key.to_string(), v);
+            self.slot.variables_dirty = true;
+        }
     }
 
     pub fn env_log(&self) -> EnvLog {
-        todo!("task 06")
+        self.slot.env_log.clone()
     }
 
     /// Whether the core wanted the ROM passed by path (`need_fullpath`).
     pub fn need_fullpath(&self) -> bool {
-        todo!("task 06")
+        self.need_fullpath
+    }
+}
+
+impl Drop for Core {
+    fn drop(&mut self) {
+        if self.game_loaded {
+            unsafe {
+                let _a = ActiveSlot::bind(&mut self.slot);
+                (self.api.unload_game)();
+            }
+        }
+        if self.initialized {
+            unsafe {
+                let _a = ActiveSlot::bind(&mut self.slot);
+                (self.api.deinit)();
+            }
+        }
+        let mut busy = BUSY.lock().unwrap();
+        if let Some(set) = busy.as_mut() {
+            set.remove(&self.path);
+        }
     }
 }
 
 pub(crate) fn frame_to_rgba8(f: &Frame) -> Vec<u8> {
-    let _ = f;
-    todo!("task 06")
+    let mut rgba = Vec::with_capacity((f.width * f.height * 4) as usize);
+    let bpp = f.format.bytes_per_pixel();
+    for y in 0..f.height {
+        let row_start = y as usize * f.pitch;
+        let row_end = row_start + (f.width as usize * bpp);
+        if row_end > f.data.len() {
+            break;
+        }
+        let row_data = &f.data[row_start..row_end];
+        match f.format {
+            PixelFormat::Rgb1555 => {
+                let (chunks, _) = row_data.as_chunks::<2>();
+                for chunk in chunks {
+                    let p = u16::from_le_bytes(*chunk);
+                    let r = ((p >> 10) & 0x1f) as u8;
+                    let g = ((p >> 5) & 0x1f) as u8;
+                    let b = (p & 0x1f) as u8;
+                    rgba.extend_from_slice(&[
+                        (r << 3) | (r >> 2),
+                        (g << 3) | (g >> 2),
+                        (b << 3) | (b >> 2),
+                        255,
+                    ]);
+                }
+            }
+            PixelFormat::Rgb565 => {
+                let (chunks, _) = row_data.as_chunks::<2>();
+                for chunk in chunks {
+                    let p = u16::from_le_bytes(*chunk);
+                    let r = ((p >> 11) & 0x1f) as u8;
+                    let g = ((p >> 5) & 0x3f) as u8;
+                    let b = (p & 0x1f) as u8;
+                    rgba.extend_from_slice(&[
+                        (r << 3) | (r >> 2),
+                        (g << 2) | (g >> 4),
+                        (b << 3) | (b >> 2),
+                        255,
+                    ]);
+                }
+            }
+            PixelFormat::Xrgb8888 => {
+                let (chunks, _) = row_data.as_chunks::<4>();
+                for chunk in chunks {
+                    rgba.extend_from_slice(&[chunk[2], chunk[1], chunk[0], 255]);
+                }
+            }
+        }
+    }
+    rgba
 }
 
 pub(crate) fn frame_rgb(f: &Frame, x: u32, y: u32) -> [u8; 3] {
-    let _ = (f, x, y);
-    todo!("task 06")
+    let bpp = f.format.bytes_per_pixel();
+    let offset = (y as usize * f.pitch) + (x as usize * bpp);
+    if offset + bpp > f.data.len() {
+        return [0, 0, 0];
+    }
+    let p_data = &f.data[offset..offset + bpp];
+    match f.format {
+        PixelFormat::Rgb1555 => {
+            let p = u16::from_le_bytes([p_data[0], p_data[1]]);
+            let r = ((p >> 10) & 0x1f) as u8;
+            let g = ((p >> 5) & 0x1f) as u8;
+            let b = (p & 0x1f) as u8;
+            [
+                (r << 3) | (r >> 2),
+                (g << 3) | (g >> 2),
+                (b << 3) | (b >> 2),
+            ]
+        }
+        PixelFormat::Rgb565 => {
+            let p = u16::from_le_bytes([p_data[0], p_data[1]]);
+            let r = ((p >> 11) & 0x1f) as u8;
+            let g = ((p >> 5) & 0x3f) as u8;
+            let b = (p & 0x1f) as u8;
+            [
+                (r << 3) | (r >> 2),
+                (g << 2) | (g >> 4),
+                (b << 3) | (b >> 2),
+            ]
+        }
+        PixelFormat::Xrgb8888 => [p_data[2], p_data[1], p_data[0]],
+    }
+}
+
+// --- Callbacks ---
+
+unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
+    let base_cmd = cmd & !ffi::RETRO_ENVIRONMENT_EXPERIMENTAL;
+    with_slot(|s| {
+        if !s.env_log.answered.contains(&base_cmd) && !s.env_log.refused.contains(&base_cmd) {
+            // Dedup record
+        }
+
+        match cmd {
+            ffi::RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
+                let fmt = *(data as *const c_uint);
+                match fmt {
+                    ffi::RETRO_PIXEL_FORMAT_0RGB1555 => s.pixel_format = PixelFormat::Rgb1555,
+                    ffi::RETRO_PIXEL_FORMAT_XRGB8888 => s.pixel_format = PixelFormat::Xrgb8888,
+                    ffi::RETRO_PIXEL_FORMAT_RGB565 => s.pixel_format = PixelFormat::Rgb565,
+                    _ => {
+                        if !s.env_log.refused.contains(&base_cmd) {
+                            s.env_log.refused.push(base_cmd);
+                        }
+                        return false;
+                    }
+                }
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+                *(data as *mut *const c_char) = s.system_dir_c.as_ptr();
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
+                *(data as *mut *const c_char) = s.save_dir_c.as_ptr();
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_VARIABLE => {
+                let var = &mut *(data as *mut ffi::retro_variable);
+                let key = CStr::from_ptr(var.key).to_string_lossy().into_owned();
+                if let Some(val) = s.option_values.get(&key) {
+                    var.value = val.as_ptr();
+                    if !s.env_log.answered.contains(&base_cmd) {
+                        s.env_log.answered.push(base_cmd);
+                    }
+                    true
+                } else {
+                    var.value = ptr::null();
+                    if !s.env_log.refused.contains(&base_cmd) {
+                        s.env_log.refused.push(base_cmd);
+                    }
+                    false
+                }
+            }
+            ffi::RETRO_ENVIRONMENT_SET_VARIABLES => {
+                let mut vars = data as *const ffi::retro_variable;
+                unsafe {
+                    while !(*vars).key.is_null() {
+                        let key = CStr::from_ptr((*vars).key).to_string_lossy().into_owned();
+                        let val_str = CStr::from_ptr((*vars).value).to_string_lossy();
+                        if let Some((desc, vals)) = val_str.split_once("; ") {
+                            let values: Vec<String> =
+                                vals.split('|').map(|s| s.trim().to_string()).collect();
+                            let default = values.first().cloned().unwrap_or_default();
+                            s.options.push(CoreOption {
+                                key: key.clone(),
+                                description: desc.to_string(),
+                                values,
+                                default: default.clone(),
+                            });
+                            s.option_values
+                                .entry(key)
+                                .or_insert_with(|| CString::new(default).unwrap());
+                        }
+                        vars = vars.add(1);
+                    }
+                }
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE => {
+                *(data as *mut bool) = s.variables_dirty;
+                s.variables_dirty = false;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
+                *(data as *mut u32) = 1;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_SET_CORE_OPTIONS
+            | ffi::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL => {
+                let defs = if cmd == ffi::RETRO_ENVIRONMENT_SET_CORE_OPTIONS {
+                    data as *const ffi::retro_core_option_definition
+                } else {
+                    (*(data as *const ffi::retro_core_options_intl)).us
+                };
+                let mut i = 0;
+                unsafe {
+                    while !(*defs.add(i)).key.is_null() {
+                        let d = &*defs.add(i);
+                        let key = CStr::from_ptr(d.key).to_string_lossy().into_owned();
+                        let desc = CStr::from_ptr(d.desc).to_string_lossy().into_owned();
+                        let mut values = Vec::new();
+                        for v_idx in 0..128 {
+                            if d.values[v_idx].value.is_null() {
+                                break;
+                            }
+                            values.push(
+                                CStr::from_ptr(d.values[v_idx].value)
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            );
+                        }
+                        let default = CStr::from_ptr(d.default_value)
+                            .to_string_lossy()
+                            .into_owned();
+                        s.options.push(CoreOption {
+                            key: key.clone(),
+                            description: desc,
+                            values,
+                            default: default.clone(),
+                        });
+                        s.option_values
+                            .entry(key)
+                            .or_insert_with(|| CString::new(default).unwrap());
+                        i += 1;
+                    }
+                }
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2
+            | ffi::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL => {
+                let v2 = if cmd == ffi::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 {
+                    data as *const ffi::retro_core_options_v2
+                } else {
+                    (*(data as *const ffi::retro_core_options_v2_intl)).us
+                };
+                let defs = (*v2).definitions;
+                let mut i = 0;
+                unsafe {
+                    while !(*defs.add(i)).key.is_null() {
+                        let d = &*defs.add(i);
+                        let key = CStr::from_ptr(d.key).to_string_lossy().into_owned();
+                        let desc = CStr::from_ptr(d.desc).to_string_lossy().into_owned();
+                        let mut values = Vec::new();
+                        for v_idx in 0..128 {
+                            if d.values[v_idx].value.is_null() {
+                                break;
+                            }
+                            values.push(
+                                CStr::from_ptr(d.values[v_idx].value)
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            );
+                        }
+                        let default = CStr::from_ptr(d.default_value)
+                            .to_string_lossy()
+                            .into_owned();
+                        s.options.push(CoreOption {
+                            key: key.clone(),
+                            description: desc,
+                            values,
+                            default: default.clone(),
+                        });
+                        s.option_values
+                            .entry(key)
+                            .or_insert_with(|| CString::new(default).unwrap());
+                        i += 1;
+                    }
+                }
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY => {
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
+                if !s.env_log.refused.contains(&base_cmd) {
+                    s.env_log.refused.push(base_cmd);
+                }
+                false // Refuse per instructions
+            }
+            ffi::RETRO_ENVIRONMENT_SET_GEOMETRY => {
+                let geo = *(data as *const ffi::retro_game_geometry);
+                s.av_info.base_width = geo.base_width;
+                s.av_info.base_height = geo.base_height;
+                s.av_info.aspect_ratio = geo.aspect_ratio;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
+                let av = *(data as *const ffi::retro_system_av_info);
+                s.av_info = AvInfo {
+                    fps: av.timing.fps,
+                    sample_rate: if av.timing.sample_rate > 50000.0 {
+                        32768.0
+                    } else {
+                        av.timing.sample_rate
+                    },
+                    base_width: av.geometry.base_width,
+                    base_height: av.geometry.base_height,
+                    max_width: av.geometry.max_width,
+                    max_height: av.geometry.max_height,
+                    aspect_ratio: av.geometry.aspect_ratio,
+                };
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => {
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS
+            | ffi::RETRO_ENVIRONMENT_SET_CONTROLLER_INFO
+            | ffi::RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS
+            | ffi::RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS
+            | ffi::RETRO_ENVIRONMENT_SET_MEMORY_MAPS
+            | ffi::RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME
+            | ffi::RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY => {
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_LANGUAGE => {
+                *(data as *mut u32) = s.env.language;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_CAN_DUPE => {
+                *(data as *mut bool) = true;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_FASTFORWARDING => {
+                *(data as *mut bool) = false;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE => {
+                *(data as *mut i32) = 3;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE => {
+                let iface = &mut *(data as *mut ffi::retro_rumble_interface);
+                iface.set_rumble_state = set_rumble_state;
+                if !s.env_log.answered.contains(&base_cmd) {
+                    s.env_log.answered.push(base_cmd);
+                }
+                true
+            }
+            _ => {
+                if !s.env_log.refused.contains(&base_cmd) {
+                    s.env_log.refused.push(base_cmd);
+                }
+                false
+            }
+        }
+    })
+    .unwrap_or(false)
+}
+
+unsafe extern "C" fn set_rumble_state(port: c_uint, effect: c_uint, strength: u16) -> bool {
+    with_slot(|s| {
+        if port < 2 && effect < 2 {
+            s.rumble[(port * 2 + effect) as usize] = strength;
+            true
+        } else {
+            false
+        }
+    })
+    .unwrap_or(false)
+}
+
+unsafe extern "C" fn video_refresh(
+    data: *const c_void,
+    width: c_uint,
+    height: c_uint,
+    pitch: usize,
+) {
+    with_slot(|s| {
+        if data.is_null() {
+            return;
+        }
+        let _bpp = s.pixel_format.bytes_per_pixel();
+        let size = pitch * height as usize;
+        let mut frame_data = vec![0u8; size];
+        ptr::copy_nonoverlapping(data as *const u8, frame_data.as_mut_ptr(), size);
+        s.frame = Some(Frame {
+            width,
+            height,
+            pitch,
+            format: s.pixel_format,
+            data: frame_data,
+        });
+    });
+}
+
+unsafe extern "C" fn audio_sample(left: i16, right: i16) {
+    with_slot(|s| {
+        s.audio.push(left);
+        s.audio.push(right);
+    });
+}
+
+unsafe extern "C" fn audio_sample_batch(data: *const i16, frames: usize) -> usize {
+    with_slot(|s| {
+        let samples = std::slice::from_raw_parts(data, frames * 2);
+        s.audio.extend_from_slice(samples);
+        frames
+    })
+    .unwrap_or(0)
+}
+
+unsafe extern "C" fn input_poll() {}
+
+unsafe extern "C" fn input_state(port: c_uint, device: c_uint, _index: c_uint, id: c_uint) -> i16 {
+    with_slot(|s| {
+        if device == ffi::RETRO_DEVICE_JOYPAD && port < 2 {
+            let mask = s.inputs[port as usize].0;
+            if id == ffi::RETRO_DEVICE_ID_JOYPAD_MASK {
+                mask as i16
+            } else if id < 16 {
+                ((mask >> id) & 1) as i16
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    })
+    .unwrap_or(0)
 }
