@@ -43,6 +43,10 @@ pub enum Screen {
     /// Before a card has been scanned, and in the M0 tests.
     Splash,
     List,
+    /// A cart on its way into the slot.
+    Inserting,
+    /// A cart on its way back out of it.
+    Ejecting,
     Playing,
     Power(PowerMenu),
 }
@@ -134,6 +138,12 @@ impl App {
 
     pub fn exit(&self) -> Option<Exit> {
         self.exit
+    }
+
+    /// How far the cart is into the slot: 0.0 standing on the row, 1.0 seated. `None` when
+    /// nothing is going in or out.
+    pub fn insert_seat(&self) -> Option<f32> {
+        todo!()
     }
 
     pub fn shelf_len(&self) -> usize {
@@ -365,6 +375,7 @@ impl App {
                 let safe = ctx.safe;
                 self.shelf_view.draw(canvas, ctx, &safe, platform, &titles);
             }
+            Screen::Inserting | Screen::Ejecting => todo!(),
             Screen::Playing => {
                 if let Some(s) = self.session.as_mut() {
                     s.upload_video(canvas);
