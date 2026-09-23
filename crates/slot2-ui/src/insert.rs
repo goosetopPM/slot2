@@ -67,35 +67,36 @@ pub struct Travel {
 /// Smootherstep. Zero velocity at both ends, so the parts of the travel meet the catch
 /// without a step in speed.
 pub fn ease(u: f32) -> f32 {
-    todo!()
+    let u = u.clamp(0.0, 1.0);
+    u * u * u * (u * (6.0 * u - 15.0) + 10.0)
 }
 
 /// How far the cart is into the slot `t` seconds into an insert: 0.0 standing on the row,
 /// 1.0 swallowed.
 pub fn seat_in(t: f32) -> f32 {
-    todo!()
+    (t / SEATED_AT).clamp(0.0, 1.0)
 }
 
 /// The same, `t` seconds into an eject: 1.0 seated, falling to 0.0 back on the row.
 pub fn seat_out(t: f32) -> f32 {
-    todo!()
+    1.0 - (t / EJECT_S).clamp(0.0, 1.0)
 }
 
 /// Where the row's shared centre line is on this panel. The same line `shelf::placements`
 /// stands its carts on, and asked for here rather than duplicated, so a cart cannot jump on
 /// the frame the button is pressed.
 pub fn row_centre(safe: &SafeArea) -> f32 {
-    todo!()
+    safe.panel_h as f32 - MOUTH_H - CENTRE_ABOVE_SLOT
 }
 
 /// Where a cartridge of height `h` stands on the row: its top edge.
 pub fn rest_y(safe: &SafeArea, h: f32) -> f32 {
-    todo!()
+    row_centre(safe) - h / 2.0
 }
 
 /// Where a cartridge of height `h` has its top edge once seated.
 pub fn seated_y(safe: &SafeArea) -> f32 {
-    todo!()
+    safe.panel_h as f32 - MOUTH_H + LIP_H + SEATED_BELOW_LIP
 }
 
 /// How far into the travel the cart's foot meets the lip.
@@ -105,7 +106,10 @@ pub fn seated_y(safe: &SafeArea) -> f32 {
 /// numerator is the drop from where the cart stands to where its foot lands; the denominator
 /// is the whole journey.
 fn catch_at(safe: &SafeArea, h: f32) -> f32 {
-    todo!()
+    let lip_y = safe.panel_h as f32 - MOUTH_H;
+    let rest_y = rest_y(safe, h);
+    let seated_y = seated_y(safe);
+    (lip_y - (rest_y + h)) / (seated_y - rest_y)
 }
 
 /// The fraction of the journey covered at `seat`, in three parts: the cart falls to the lip,
@@ -113,7 +117,17 @@ fn catch_at(safe: &SafeArea, h: f32) -> f32 {
 /// arrives seated without ever having met anything, which is what makes it read as a card
 /// going down a chute rather than a cartridge going into a machine.
 fn journey(safe: &SafeArea, h: f32, seat: f32) -> f32 {
-    todo!()
+    let seat = seat.clamp(0.0, 1.0);
+    let catch = catch_at(safe, h);
+
+    if seat < CATCH_IN {
+        catch * ease(seat / CATCH_IN)
+    } else if seat < CATCH_OUT {
+        catch + CREEP * (seat - CATCH_IN) / (CATCH_OUT - CATCH_IN)
+    } else {
+        let c = catch + CREEP;
+        c + (1.0 - c) * ease((seat - CATCH_OUT) / (1.0 - CATCH_OUT))
+    }
 }
 
 /// Where the cart is at `seat`.
@@ -123,5 +137,16 @@ fn journey(safe: &SafeArea, h: f32, seat: f32) -> f32 {
 /// to the centre on that frame. `cart` is the cartridge's natural size — a cart is an object
 /// and goes into the slot at the size it is.
 pub fn travel(safe: &SafeArea, cart: (f32, f32), rest_x: f32, seat: f32) -> Travel {
-    todo!()
+    let (w, h) = cart;
+    let j = journey(safe, h, seat);
+    let centred_x = (safe.panel_w as f32 - w) / 2.0;
+    let seated_y = seated_y(safe);
+    let rest_y = rest_y(safe, h);
+
+    Travel {
+        x: rest_x + (centred_x - rest_x) * j,
+        y: rest_y + (seated_y - rest_y) * j,
+        w,
+        h,
+    }
 }

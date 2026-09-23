@@ -7,6 +7,7 @@
 //! This module does no drawing. It answers "where does each cart go", and something else
 //! turns that into canvas calls.
 
+use crate::insert::PART;
 use crate::layout::SafeArea;
 
 /// How far apart carts sit along the row, in artwork units.
@@ -216,7 +217,12 @@ impl Shelf {
     /// starts its travel from the centre anyway jumps sideways on the frame the button is
     /// pressed.
     pub fn rest_x(&self, safe: &SafeArea, cart: (f32, f32)) -> f32 {
-        todo!()
+        let (natural_w, _) = cart;
+        let offset = self.target - self.scroll;
+        let away = offset.abs().min(1.0);
+        let scale = 1.0 + (SIDE_SCALE - 1.0) * away;
+        let w = natural_w * scale;
+        safe.panel_w as f32 / 2.0 + offset * PITCH - w / 2.0
     }
 
     /// The row while a cart is going into the slot.
@@ -230,7 +236,51 @@ impl Shelf {
     /// Leaving it in the row as well puts two of one cart on screen, and the travel then
     /// reads as a copy sliding away from the original.
     pub fn parted(&self, safe: &SafeArea, cart: (f32, f32), recede: f32) -> Vec<Placement> {
-        todo!()
+        if self.len == 0 {
+            return Vec::new();
+        }
+        let panel_w = safe.panel_w as f32;
+        let panel_h = safe.panel_h as f32;
+        let (natural_w, natural_h) = cart;
+
+        let centre = panel_h - MOUTH_H - CENTRE_ABOVE_SLOT;
+        let floor = centre + natural_h / 2.0;
+
+        let mut out: Vec<Placement> = (-SLOTS..=SLOTS)
+            .filter_map(|slot| {
+                if recede > 0.0 && slot == 0 {
+                    return None;
+                }
+                let index = self.cart_at_offset(slot)?;
+                let offset = self.target + slot as f32 - self.scroll;
+                let away_scale = offset.abs().min(1.0);
+                let scale = 1.0 + (SIDE_SCALE - 1.0) * away_scale;
+
+                let w = natural_w * scale;
+                let h = natural_h * scale;
+                let mut x = panel_w / 2.0 + offset * PITCH - w / 2.0;
+
+                let away_push = offset.signum() * (1.0 + offset.abs());
+                x += away_push * PART * recede;
+
+                let alpha = (1.0 + (SIDE_ALPHA - 1.0) * away_scale) * (1.0 - recede);
+
+                (x + w > 0.0 && x < panel_w && alpha > 0.0).then_some(Placement {
+                    index,
+                    x,
+                    y: floor - h,
+                    w,
+                    h,
+                    alpha,
+                })
+            })
+            .collect();
+
+        out.sort_by(|a, b| {
+            let d = |p: &Placement| ((p.x + p.w / 2.0) - panel_w / 2.0).abs();
+            d(b).total_cmp(&d(a))
+        });
+        out
     }
 
     /// Every cart to draw this frame, nearest the selection last so it lands on top.
@@ -240,55 +290,6 @@ impl Shelf {
     /// either side of the safe area to the background and the shelf, so a wider panel shows
     /// more of the neighbours rather than moving the selection off centre.
     pub fn placements(&self, safe: &SafeArea, cart: (f32, f32)) -> Vec<Placement> {
-        if self.len == 0 {
-            return Vec::new();
-        }
-        let panel_w = safe.panel_w as f32;
-        let panel_h = safe.panel_h as f32;
-        let (natural_w, natural_h) = cart;
-
-        // Every platform's carts share a *centre* line, not a floor. A Game Boy pak is 253
-        // units tall against a GBA cart's 135, and measured from a shared floor the pak sat
-        // 59px higher and crowded the top of the screen. A shrunken neighbour then keeps its
-        // foot on the line the selection stands on rather than shrinking about its own
-        // middle, so the row reads as objects standing on a shelf instead of carts floating.
-        //
-        // That shared line is placed against the slot rather than the panel's middle; see
-        // `CENTRE_ABOVE_SLOT`.
-        let centre = panel_h - MOUTH_H - CENTRE_ABOVE_SLOT;
-        let floor = centre + natural_h / 2.0;
-
-        let mut out: Vec<Placement> = (-SLOTS..=SLOTS)
-            .filter_map(|slot| {
-                let index = self.cart_at_offset(slot)?;
-                // How far this slot is from the middle of the panel, in pitches. Fractional
-                // while the row slides, which is what makes a cart shrink and fade *into*
-                // the side rather than snapping there when the selection changes.
-                let offset = self.target + slot as f32 - self.scroll;
-                let away = offset.abs().min(1.0);
-                let scale = 1.0 + (SIDE_SCALE - 1.0) * away;
-
-                let w = natural_w * scale;
-                let h = natural_h * scale;
-                let x = panel_w / 2.0 + offset * PITCH - w / 2.0;
-                (x + w > 0.0 && x < panel_w).then_some(Placement {
-                    index,
-                    x,
-                    y: floor - h,
-                    w,
-                    h,
-                    alpha: 1.0 + (SIDE_ALPHA - 1.0) * away,
-                })
-            })
-            .collect();
-
-        // Nearest the middle draws last. Sorting on distance rather than on "is it the
-        // selection" keeps it right mid-scroll, when no cart is exactly the selection and
-        // two of them are equally close to being it.
-        out.sort_by(|a, b| {
-            let d = |p: &Placement| ((p.x + p.w / 2.0) - panel_w / 2.0).abs();
-            d(b).total_cmp(&d(a))
-        });
-        out
+        self.parted(safe, cart, 0.0)
     }
 }

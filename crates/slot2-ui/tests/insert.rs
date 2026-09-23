@@ -51,23 +51,28 @@ fn at(safe: &SafeArea, p: Platform, seat: f32) -> Travel {
 
 // ---------------------------------------------------------------- the clock
 
-#[test]
-fn the_hold_is_part_of_the_insert_not_extra() {
-    // The cart is seated well before the animation ends, and the rest of it is the dwell
-    // that covers the core load. If SEATED_AT were the whole thing there would be nothing
-    // on screen while the core comes up.
-    assert!(SEATED_AT < INSERT_S, "the cart seats at the very end");
-    assert!(
-        (SEATED_AT + INSERT_HOLD_S - INSERT_S).abs() < 1e-6,
-        "the seat, the hold and the whole do not add up"
-    );
-    assert!(EJECT_S > 0.0);
-}
+// The cart is seated well before the animation ends, and the rest of it is the dwell that
+// covers the core load. If SEATED_AT were the whole thing there would be nothing on screen
+// while the core comes up.
+//
+// Checked at compile time rather than in a `#[test]`, because that is what these are: a
+// relationship between three constants, which either holds when the crate is built or does
+// not. Asserting it at run time is the thing clippy calls a constant assertion, and it is
+// right — there is no run time at which it could be any different.
+const _: () = assert!(SEATED_AT < INSERT_S, "the cart seats at the very end");
+const _: () = assert!(
+    SEATED_AT + INSERT_HOLD_S - INSERT_S < 1e-6 && SEATED_AT + INSERT_HOLD_S - INSERT_S > -1e-6,
+    "the seat, the hold and the whole do not add up"
+);
+const _: () = assert!(EJECT_S > 0.0);
 
 #[test]
 fn the_seat_runs_from_the_row_to_the_slot_and_stops_there() {
     assert_eq!(seat_in(0.0), 0.0);
-    assert!((seat_in(SEATED_AT) - 1.0).abs() < 1e-5, "not seated on time");
+    assert!(
+        (seat_in(SEATED_AT) - 1.0).abs() < 1e-5,
+        "not seated on time"
+    );
     // The hold is the cart sitting still, not the cart carrying on through the floor.
     assert_eq!(seat_in(INSERT_S), 1.0);
     assert_eq!(seat_in(INSERT_S * 10.0), 1.0);
@@ -221,7 +226,10 @@ fn the_cart_is_caught_on_the_lip_on_the_way_in() {
                 caught * 3.0 < pushed,
                 "{g:?} {p:?}: no push — {caught} against {pushed}"
             );
-            assert!(caught > 0.0, "{g:?} {p:?}: a dead stop reads as a dropped frame");
+            assert!(
+                caught > 0.0,
+                "{g:?} {p:?}: a dead stop reads as a dropped frame"
+            );
         }
     }
 }
@@ -247,8 +255,8 @@ fn the_catch_lands_on_the_same_frame_whatever_the_panel() {
         }
         when.push(hit);
     }
-    let spread = when.iter().cloned().fold(0.0, f32::max)
-        - when.iter().cloned().fold(1.0, f32::min);
+    let spread =
+        when.iter().cloned().fold(0.0, f32::max) - when.iter().cloned().fold(1.0, f32::min);
     assert!(
         spread < 0.02,
         "the catch lands at {when:?} on the three panels"
@@ -263,7 +271,10 @@ fn a_cart_that_starts_off_centre_arrives_centred() {
     let cart = cart_of(Platform::Gba);
     let rest_x = 40.0;
     let start = travel(&safe, cart, rest_x, 0.0);
-    assert!((start.x - rest_x).abs() < 0.5, "it jumped on the first frame");
+    assert!(
+        (start.x - rest_x).abs() < 0.5,
+        "it jumped on the first frame"
+    );
 
     let end = travel(&safe, cart, rest_x, 1.0);
     assert!(
@@ -381,13 +392,13 @@ fn the_row_parts_for_the_cart_going_in() {
     for i in 1..=5 {
         let recede = i as f32 / 10.0;
         let s = x_of(recede).unwrap_or_else(|| panic!("the neighbour vanished at {recede}"));
-        assert!(s > last, "the row closed back up at {recede}: {s} <= {last}");
+        assert!(
+            s > last,
+            "the row closed back up at {recede}: {s} <= {last}"
+        );
         last = s;
     }
-    assert!(
-        last > rest + 50.0,
-        "the row barely moved: {rest} to {last}"
-    );
+    assert!(last > rest + 50.0, "the row barely moved: {rest} to {last}");
 
     // And it fades as it goes, so a row that has fully made way is gone rather than piled up
     // against the edges.
@@ -445,6 +456,42 @@ fn the_cart_goes_behind_the_slot_not_over_it() {
         chrome > cart,
         "the cart is drawn at {cart} and the slot at {chrome}: the cart is on top of the machine"
     );
+}
+
+#[test]
+fn a_seated_cart_is_still_visible_in_the_mouth() {
+    // The gap the first version of this contract left, and the fault it let through: the
+    // machine's face was painted across the mouth as well as either side of it, so a
+    // cartridge arrived at the slot and vanished behind it but for the nine-pixel opening.
+    // Every ordering test still passed, because the chrome really was drawn after the cart.
+    //
+    // A cart is *in* the mouth, not behind it. What occludes is the plastic either side.
+    let safe = SafeArea::for_geometry(Geometry::W720H480);
+    let t = ["A", "B", "C"];
+    let mut v = ShelfView::default();
+    v.shelf.set_len(3);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx();
+    v.draw_insert(&mut canvas, &mut c, &safe, Platform::Gba, &t, 1.0);
+
+    let band = safe.panel_h as f32 - MOUTH_H;
+    let cart = canvas
+        .frame()
+        .iter()
+        .rposition(|o| matches!(o, Op::Image { y, .. } if *y > band))
+        .expect("a seated insert drew no cart");
+
+    // Down the middle of the mouth, a little below the opening: after the cart is drawn,
+    // nothing may be painted over this point.
+    let (px, py) = (safe.panel_w as f32 / 2.0, band + MOUTH_H * 0.75);
+    for (i, op) in canvas.frame().iter().enumerate().skip(cart + 1) {
+        if let Op::Rect { x, y, w, h, .. } = op {
+            assert!(
+                !(px >= *x && px <= x + w && py >= *y && py <= y + h),
+                "op {i} paints {x},{y} {w}x{h} over the seated cart at {px},{py}"
+            );
+        }
+    }
 }
 
 #[test]

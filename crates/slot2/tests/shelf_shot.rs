@@ -147,5 +147,25 @@ fn the_shelf_holds_up_on_every_panel() {
             "{g:?} {platform:?}: wrote {} ({ink} pixels of ink)",
             path.display()
         );
+
+        // And the insert, at the four moments worth looking at: standing on the row, caught
+        // on the lip, being pushed through, and seated. Testing told us the chrome was drawn
+        // after the cart and told us nothing about whether the cart could still be seen — it
+        // could not, and only a picture said so.
+        let titles: Vec<String> = app.carts().iter().map(|c| c.title.clone()).collect();
+        let titles: Vec<&str> = titles.iter().map(|s| s.as_str()).collect();
+        for seat in [0.0f32, 0.5, 0.8, 1.0] {
+            canvas.clear(slot2_gfx::Color::from_u8(0x12, 0x14, 0x18, 255));
+            app.shelf_view
+                .draw_insert(&mut canvas, &mut ctx, &safe, platform, &titles, seat);
+            let img = canvas.read_back();
+            let path = out.join(format!(
+                "insert-{}x{}-{:02}.png",
+                panel.0,
+                panel.1,
+                (seat * 10.0) as u32
+            ));
+            write_png(&path, &img);
+        }
     }
 }

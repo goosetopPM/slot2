@@ -35,7 +35,55 @@ impl ShelfView {
         titles: &[&str],
         seat: f32,
     ) {
-        todo!()
+        let skin = skin::skin(platform);
+        let panel_w = safe.panel_w as f32;
+        let panel_h = safe.panel_h as f32;
+
+        let band_y = (panel_h - MOUTH_H).round();
+        let mouth_w = skin.cart_size.0 + MOUTH_EXTRA;
+        let mouth_x = ((panel_w - mouth_w) / 2.0).round();
+
+        // 1. Back: the bay and the opening.
+        self.draw_back(canvas, mouth_x, mouth_w, band_y);
+
+        // 2. Parted row.
+        let placements = self.shelf.parted(safe, skin.cart_size, seat);
+        let (shell_tex, detail_tex) = self.prepare_textures(canvas, skin);
+        self.draw_placements(
+            canvas,
+            ctx,
+            &placements,
+            skin,
+            titles,
+            shell_tex,
+            detail_tex,
+        );
+
+        // 3. The travelling cart. Nothing goes into the slot off an empty shelf — there is
+        // no cartridge to put there, and drawing one anyway conjures a game the card does
+        // not have.
+        if seat > 0.0 && !self.shelf.is_empty() {
+            let rest_x = self.shelf.rest_x(safe, skin.cart_size);
+            let t = crate::insert::travel(safe, skin.cart_size, rest_x, seat);
+            self.draw_cart(
+                canvas,
+                ctx,
+                t.x,
+                t.y,
+                t.w,
+                t.h,
+                1.0,
+                self.shelf.selected(),
+                self.shelf.selected(),
+                skin,
+                titles,
+                shell_tex,
+                detail_tex,
+            );
+        }
+
+        // 4. Front: the plastic face of the machine.
+        self.draw_front(canvas, panel_w, mouth_x, mouth_w, band_y);
     }
 
     /// Draw the row and the slot it sits above.
@@ -52,101 +100,171 @@ impl ShelfView {
     ) {
         let skin = skin::skin(platform);
         let panel_w = safe.panel_w as f32;
-
-        // 1. The slot, which is chrome rather than artwork: a band across the foot of the
-        // panel, a mouth a little wider than a cartridge, and a lip above it. Ported from
-        // the original's `slot_chrome`, whose proportions are in the same units the cart
-        // drawings are, so they carry across unscaled.
-        //
-        // Drawn even when the row is empty — a shelf with no games is not a blank screen,
-        // and the slot is what says something is meant to go here.
         let panel_h = safe.panel_h as f32;
-        let band_y = panel_h - MOUTH_H;
+
+        let band_y = (panel_h - MOUTH_H).round();
         let mouth_w = skin.cart_size.0 + MOUTH_EXTRA;
         let mouth_x = ((panel_w - mouth_w) / 2.0).round();
 
-        canvas.rect(0.0, band_y, panel_w, MOUTH_H, BAND);
-        canvas.rect(0.0, band_y, panel_w, LIP_H, LIP);
-        canvas.rect(mouth_x, band_y + LIP_H + 5.0, mouth_w, SLIT_H, SLIT);
+        // 1. Back: the bay and the opening.
+        self.draw_back(canvas, mouth_x, mouth_w, band_y);
 
         // 2. The carts.
-        //
-        // Artwork is rasterised once, at the size the *selection* is drawn, and the
-        // neighbours are that same texture scaled down by the canvas. Asking the cache for
-        // each placement's own size instead would rasterise an SVG and upload a texture on
-        // nearly every frame of every scroll — a neighbour's size lerps continuously as the
-        // row slides — and nothing evicts them. A 0.78x downscale of a quad costs nothing
-        // and looks the same.
+        let placements = self.shelf.placements(safe, skin.cart_size);
+        let (shell_tex, detail_tex) = self.prepare_textures(canvas, skin);
+        self.draw_placements(
+            canvas,
+            ctx,
+            &placements,
+            skin,
+            titles,
+            shell_tex,
+            detail_tex,
+        );
+
+        // 3. Front: the plastic face of the machine.
+        self.draw_front(canvas, panel_w, mouth_x, mouth_w, band_y);
+    }
+
+    fn prepare_textures(
+        &mut self,
+        canvas: &mut dyn Canvas,
+        skin: &skin::PlatformSkin,
+    ) -> (Option<slot2_gfx::TexId>, Option<slot2_gfx::TexId>) {
         let art_w = skin.cart_size.0.round() as u32;
         let art_h = skin.cart_size.1.round() as u32;
         let shell_tex = self.cache.mask(canvas, skin.cart, art_w, art_h);
         let detail_tex = (!skin.cart_detail.is_empty())
             .then(|| self.cache.mask(canvas, skin.cart_detail, art_w, art_h))
             .flatten();
+        (shell_tex, detail_tex)
+    }
 
-        let placements = self.shelf.placements(safe, skin.cart_size);
+    #[allow(clippy::too_many_arguments)]
+    fn draw_placements(
+        &mut self,
+        canvas: &mut dyn Canvas,
+        ctx: &mut UiCtx,
+        placements: &[crate::shelf::Placement],
+        skin: &skin::PlatformSkin,
+        titles: &[&str],
+        shell_tex: Option<slot2_gfx::TexId>,
+        detail_tex: Option<slot2_gfx::TexId>,
+    ) {
         let selected_index = self.shelf.selected();
-
         for p in placements.iter() {
-            let alpha = p.alpha;
-            let [r, g, b] = skin.shell.colour;
-            let tint = Color::from_rgb8(r, g, b).with_alpha(alpha);
-
-            // Finish::Translucent is not honoured yet: a clear shell should lighten toward
-            // the rim, and there is no cheap way to do that with a flat tint. Drawn solid
-            // until the shader work of M5 gives it somewhere to live.
-            if let Some(tex) = shell_tex {
-                canvas.image(tex, p.x, p.y, p.w, p.h, tint);
-            }
-            if let Some(tex) = detail_tex {
-                // Darker than the shell, so the moulded ribs and recesses read as shadow.
-                let detail_tint = Color::rgba(tint.r * 0.8, tint.g * 0.8, tint.b * 0.8, alpha);
-                canvas.image(tex, p.x, p.y, p.w, p.h, detail_tint);
-            }
-
-            // Label plate: a lightened area where the sticker goes.
-            let scale_x = p.w / skin.cart_size.0;
-            let scale_y = p.h / skin.cart_size.1;
-            let lw = skin.label.w * scale_x;
-            let lh = skin.label.h * scale_y;
-            let lx = p.x + skin.label.x * scale_x;
-            let ly = p.y + skin.label.y * scale_y;
-
-            canvas.rect(lx, ly, lw, lh, Color::WHITE.with_alpha(0.2 * alpha));
-
-            // 3. The title of the selection only — a side cart is small and dim and its
-            // title would be illegible. Keyed on the index rather than on "is this the last
-            // placement", because mid-scroll the last one is whichever cart is nearest the
-            // middle, and the title would blink out exactly when it is being read.
-            if p.index == selected_index && p.index < titles.len() {
-                let title = titles[p.index];
-
-                // Nothing may rasterise or upload on a redraw. face() caches based on (text, px).
-                // Using a constant PX_TITLE ensures the cache is hit even while the cart
-                // is scaling during a scroll; we scale the resulting quad instead.
-                let base_px = crate::PX_TITLE;
-                let f = face::face(canvas, ctx, title, base_px);
-                let tw = face::measure(ctx, title, base_px);
-
-                // Scale to match the cart's current size, then shrink further if the title
-                // is too wide for the label plate.
-                let mut s = scale_x;
-                if tw * s > lw {
-                    s = lw / tw;
-                }
-
-                let dw = tw * s;
-                let dh = f.h as f32 * s;
-
-                canvas.image(
-                    f.tex,
-                    lx + (lw - dw) / 2.0,
-                    ly + (lh - dh) / 2.0,
-                    dw,
-                    dh,
-                    Color::WHITE.with_alpha(alpha),
-                );
-            }
+            self.draw_cart(
+                canvas,
+                ctx,
+                p.x,
+                p.y,
+                p.w,
+                p.h,
+                p.alpha,
+                p.index,
+                selected_index,
+                skin,
+                titles,
+                shell_tex,
+                detail_tex,
+            );
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_cart(
+        &mut self,
+        canvas: &mut dyn Canvas,
+        ctx: &mut UiCtx,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        alpha: f32,
+        index: usize,
+        selected_index: usize,
+        skin: &skin::PlatformSkin,
+        titles: &[&str],
+        shell_tex: Option<slot2_gfx::TexId>,
+        detail_tex: Option<slot2_gfx::TexId>,
+    ) {
+        let [r, g, b] = skin.shell.colour;
+        let tint = Color::from_rgb8(r, g, b).with_alpha(alpha);
+
+        if let Some(tex) = shell_tex {
+            canvas.image(tex, x, y, w, h, tint);
+        }
+        if let Some(tex) = detail_tex {
+            let detail_tint = Color::rgba(tint.r * 0.8, tint.g * 0.8, tint.b * 0.8, alpha);
+            canvas.image(tex, x, y, w, h, detail_tint);
+        }
+
+        let scale_x = w / skin.cart_size.0;
+        let scale_y = h / skin.cart_size.1;
+        let lw = skin.label.w * scale_x;
+        let lh = skin.label.h * scale_y;
+        let lx = x + skin.label.x * scale_x;
+        let ly = y + skin.label.y * scale_y;
+
+        canvas.rect(lx, ly, lw, lh, Color::WHITE.with_alpha(0.2 * alpha));
+
+        if index == selected_index && index < titles.len() {
+            let title = titles[index];
+            let base_px = crate::PX_TITLE;
+            let f = face::face(canvas, ctx, title, base_px);
+            let tw = face::measure(ctx, title, base_px);
+
+            let mut s = scale_x;
+            if tw * s > lw {
+                s = lw / tw;
+            }
+
+            let dw = tw * s;
+            let dh = f.h as f32 * s;
+
+            canvas.image(
+                f.tex,
+                lx + (lw - dw) / 2.0,
+                ly + (lh - dh) / 2.0,
+                dw,
+                dh,
+                Color::WHITE.with_alpha(alpha),
+            );
+        }
+    }
+
+    /// Everything you can see *into*: the bay the cart stands in and the opening at the foot
+    /// of it. Both are holes, so the cart passes in front of them.
+    ///
+    /// The bay has to be here rather than in the front. Painted over the cart instead, a
+    /// seated cartridge shows through the nine-pixel opening and nowhere else — a hundred
+    /// and thirty-five pixels of cartridge arrive at the slot and disappear. What is meant
+    /// to happen is that it stops with its top edge just inside the mouth and the rest of it
+    /// sticking out, which is why `SEATED_BELOW_LIP` is four pixels and not the depth of a
+    /// cartridge.
+    fn draw_back(&self, canvas: &mut dyn Canvas, mouth_x: f32, mouth_w: f32, band_y: f32) {
+        canvas.rect(mouth_x, band_y, mouth_w, MOUTH_H, BAND);
+        canvas.rect(mouth_x, band_y + LIP_H + 5.0, mouth_w, SLIT_H, SLIT);
+    }
+
+    /// The plastic: the band either side of the mouth, and the lip along its top edge. This
+    /// is all that occludes, and the mouth itself stays open.
+    fn draw_front(
+        &self,
+        canvas: &mut dyn Canvas,
+        panel_w: f32,
+        mouth_x: f32,
+        mouth_w: f32,
+        band_y: f32,
+    ) {
+        canvas.rect(0.0, band_y + LIP_H, mouth_x, MOUTH_H - LIP_H, BAND);
+        canvas.rect(
+            mouth_x + mouth_w,
+            band_y + LIP_H,
+            panel_w - (mouth_x + mouth_w),
+            MOUTH_H - LIP_H,
+            BAND,
+        );
+        canvas.rect(0.0, band_y, panel_w, LIP_H, LIP);
     }
 }
