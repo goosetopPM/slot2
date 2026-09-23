@@ -480,12 +480,13 @@ fn rewinding_puts_the_game_back_where_it_was() {
     );
 
     // Step back far enough to cross the point we recorded.
+    // The cap only guards against a rewind that never says it is finished; how many
+    // captures there actually are depends on the interval this machine settled on, so it
+    // has to be well clear of that rather than a guess at it.
     let mut steps = 0;
     while s.rewind_step() {
         steps += 1;
-        if steps > 40 {
-            break;
-        }
+        assert!(steps < 1000, "rewind stepped back forever");
     }
     assert!(steps > 0, "rewind refused to step back at all");
     assert!(

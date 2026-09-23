@@ -18,6 +18,7 @@ pub mod game_list;
 pub mod layout;
 pub mod power_menu;
 pub mod shelf;
+pub mod shelf_view;
 pub mod skin;
 pub mod splash;
 pub mod svg;
@@ -28,6 +29,7 @@ pub use game_list::GameList;
 pub use layout::{SafeArea, SAFE_H, SAFE_W};
 pub use power_menu::{PowerChoice, PowerMenu};
 pub use shelf::{Placement, Shelf, SIDE_ALPHA, SIDE_SCALE};
+pub use shelf_view::ShelfView;
 pub use splash::Splash;
 
 use std::path::{Path, PathBuf};

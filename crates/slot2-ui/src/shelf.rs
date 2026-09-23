@@ -49,6 +49,11 @@ pub struct Shelf {
     /// `scroll`, or the spring would chase a target that shifts under it every frame.
     target: f32,
 }
+impl Default for Shelf {
+    fn default() -> Self {
+        Shelf::new(0)
+    }
+}
 
 impl Shelf {
     pub fn new(len: usize) -> Shelf {
