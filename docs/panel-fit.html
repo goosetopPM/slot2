@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--
+  Panel Fit — every panel SLOT2 ships for, against every console it runs.
+
+  Open it in any browser; it needs nothing but itself. The one network request is the
+  Google Fonts stylesheet, and the page falls back to system faces without it.
+
+  The arithmetic is slot2_gfx::place and slot2_retro::Aspect::display, transcribed into
+  JavaScript. That transcription is the thing to distrust: if it and the Rust ever disagree,
+  the Rust is right. crates/slot2/tests/scaling.rs is what actually holds them together —
+  it checks DESIGN.md's multiplier table against place() on every build.
+
+  Published copy: https://claude.ai/artifact/Ss6Kc7kz89UrotVNzsacvm
+-->
+<style>
+  :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Panel Fit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --paper: #F2F5F1;
+    --card: #FBFCFA;
+    --ink: #151F1A;
+    --ink-soft: #55635C;
+    --ink-faint: #8A968F;
+    --rule: #D8DED6;
+    --panel: #E4E9E1;
+    --void: #CDD5CB;
+    --integer: #C05A26;
+    --integer-soft: #EBD3C4;
+    --aspect: #2C6E69;
+    --warn: #9A6B18;
+    --shadow: 0 1px 2px rgba(21, 31, 26, .06), 0 8px 24px -16px rgba(21, 31, 26, .3);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper: #111613;
+      --card: #171D19;
+      --ink: #E7EDE5;
+      --ink-soft: #99A69E;
+      --ink-faint: #6B7973;
+      --rule: #2A332E;
+      --panel: #1E2622;
+      --void: #262F2A;
+      --integer: #E28A52;
+      --integer-soft: #3A2A1E;
+      --aspect: #5FAAA3;
+      --warn: #D2A340;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .8);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #111613;
+    --card: #171D19;
+    --ink: #E7EDE5;
+    --ink-soft: #99A69E;
+    --ink-faint: #6B7973;
+    --rule: #2A332E;
+    --panel: #1E2622;
+    --void: #262F2A;
+    --integer: #E28A52;
+    --integer-soft: #3A2A1E;
+    --aspect: #5FAAA3;
+    --warn: #D2A340;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .8);
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 1140px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 40px 72px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 700;
+    letter-spacing: -.025em;
+    line-height: 1.05;
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+  .lede {
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 8px;
+  }
+  .lede code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .9em; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 14px;
+  }
+
+  /* --- controls ---------------------------------------------------------- */
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 32px 0 8px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+  }
+  .chip {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .chip:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .chip[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+  .chip:focus-visible { outline: 2px solid var(--aspect); outline-offset: 2px; }
+  .chip .sub { font-family: "IBM Plex Mono", ui-monospace, monospace; opacity: .7; font-size: 11px; margin-left: 6px; }
+  .toggles { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+
+  /* --- legend ------------------------------------------------------------ */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin: 18px 0 28px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 15px; height: 11px; border-radius: 2px; flex: none; }
+  .swatch.int { background: var(--integer); }
+  .swatch.asp { border: 1.5px dashed var(--aspect); }
+  .swatch.safe { border: 1px dashed var(--ink-faint); }
+
+  /* --- screen cards ------------------------------------------------------ */
+  .screens {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 20px;
+  }
+  .screen {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .screen header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .screen h2 {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0;
+  }
+  .devices {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    text-align: right;
+    line-height: 1.35;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .stage { width: 100%; display: block; max-width: 100%; }
+  .stage rect.panel { fill: var(--void); }
+  .stage rect.safe { fill: none; stroke: var(--ink-faint); stroke-width: 2; stroke-dasharray: 8 7; opacity: .5; }
+  .stage rect.int { fill: var(--integer); opacity: .92; }
+  .stage rect.asp { fill: none; stroke: var(--aspect); stroke-width: 3.5; stroke-dasharray: 10 7; }
+  .stage text.mark {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600;
+    fill: var(--card);
+  }
+
+  .readout { display: grid; gap: 9px; }
+  .row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: baseline;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .row .k { color: var(--ink-faint); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  .row .v { color: var(--ink); font-weight: 500; }
+  .row .m { color: var(--ink-soft); text-align: right; }
+  .row.int .v { color: var(--integer); }
+  .row.asp .v { color: var(--aspect); }
+  .verdict {
+    font-family: Archivo, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--ink-soft);
+    border-top: 1px solid var(--rule);
+    padding-top: 11px;
+    margin: 0;
+  }
+  .verdict b { color: var(--ink); font-weight: 600; }
+
+  /* --- matrix ------------------------------------------------------------ */
+  .matrix-wrap { margin-top: 56px; }
+  .tablescroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  caption { text-align: left; padding: 0 0 14px; color: var(--ink-soft); font-size: 13.5px; max-width: 70ch; }
+  th, td {
+    padding: 9px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+    font-size: 13px;
+  }
+  thead th {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 500;
+    background: var(--paper);
+    position: sticky;
+    top: 0;
+  }
+  tbody th { font-weight: 600; }
+  tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  td .i { color: var(--integer); font-weight: 600; }
+  td .a { color: var(--aspect); }
+  .sep td, .sep th { background: var(--paper); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); font-family: "IBM Plex Mono", ui-monospace, monospace; padding: 7px 14px; }
+  .variant th { color: var(--ink-soft); font-weight: 500; }
+  .variant th::before { content: "↳ "; color: var(--ink-faint); }
+
+  .notes { margin-top: 48px; display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .note { border-left: 2px solid var(--rule); padding-left: 16px; }
+  .note h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; letter-spacing: -.005em; }
+  .note p { margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.55; }
+  .note code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .92em; color: var(--ink); }
+
+  @media (max-width: 560px) {
+    .toggles { margin-left: 0; width: 100%; }
+  }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">SLOT2 · slot2-gfx::place</p>
+  <h1>Panel Fit</h1>
+  <p class="lede">
+    Every panel SLOT2 ships for, against every console it runs. <b>Integer</b> takes the largest whole
+    multiple that fits and ignores the console's intended shape; <b>AspectFit</b> takes the largest size
+    that keeps that shape and accepts a fractional factor. The arithmetic below is
+    <code>place()</code> and <code>Aspect::display()</code>, transcribed.
+  </p>
+
+  <div class="controls">
+    <div id="platformChips" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    <div class="toggles">
+      <button class="chip" id="cropToggle" aria-pressed="true" type="button">NES overscan crop</button>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="swatch int"></i> Integer — what ships by default</span>
+    <span><i class="swatch asp"></i> AspectFit — the console's real shape</span>
+    <span><i class="swatch safe"></i> 640×480 UI safe area</span>
+  </div>
+
+  <div class="screens" id="screens"></div>
+
+  <div class="matrix-wrap">
+    <table>
+      <caption>
+        Every combination at once. <span class="i" style="color:var(--integer);font-weight:600">Orange</span>
+        is the integer factor; <span class="a" style="color:var(--aspect)">teal</span> is the fractional one
+        AspectFit would use, and how far the integer picture sits from the shape the console meant.
+      </caption>
+    </table>
+    <div class="tablescroll">
+      <table id="matrix"></table>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <h3>Why Integer is the default</h3>
+      <p>Every source pixel becomes the same number of screen pixels, so sprite edges stay hard and 8×8
+        text stays legible. A fractional factor means filtering, which on a 240-pixel-wide picture is the
+        difference between reading a menu and squinting at it.</p>
+    </div>
+    <div class="note">
+      <h3>Why the shapes are wrong</h3>
+      <p>A NES pixel is 8:7 — 256×240 was meant to look wider than it measures. Integer keeps the buffer's
+        proportions, so the picture comes out 12.5% narrow. Nobody who grew up on a CRT will mistake it;
+        nobody playing on a handheld tends to mind.</p>
+    </div>
+    <div class="note">
+      <h3>Why the Mega Drive is modelled differently</h3>
+      <p>It switches between 256 and 320 pixels across mid-scene and both filled the same 4:3 screen, so
+        there is no constant pixel ratio to store. <code>Aspect::Display</code> holds the shape fixed
+        instead, which is what stops the picture jumping when a game changes mode.</p>
+    </div>
+    <div class="note">
+      <h3>720×720 is the odd one</h3>
+      <p>The tall panel is the only one that buys a Game Boy a fourth step of scale, and the only one where
+        a 4:3 console leaves a band of unused screen above and below rather than at the sides.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  "use strict";
+
+  // --- the registry, transcribed -----------------------------------------
+  const GEOMETRIES = [
+    { w: 640, h: 480, devices: ["rg35xxsp", "rg35xxplus", "rg35xxh", "rg35xxpro", "rg40xxh", "rg40xxv"] },
+    { w: 720, h: 480, devices: ["rgsp", "rg34xx", "rg34xxsp"] },
+    { w: 720, h: 720, devices: ["rgcubexx"] },
+  ];
+
+  // aspect: {k:"square"} | {k:"pixel",n,d} | {k:"display",n,d}
+  const PLATFORMS = [
+    { id: "gb",   name: "Game Boy",       sub: "GB · GBC", w: 160, h: 144, aspect: { k: "square" } },
+    { id: "gba",  name: "Game Boy Advance", sub: "GBA",    w: 240, h: 160, aspect: { k: "square" } },
+    { id: "nes",  name: "NES",            sub: "NES",      w: 256, h: 240, aspect: { k: "pixel", n: 8, d: 7 }, crop: 8 },
+    { id: "snes", name: "SNES",           sub: "SNES",     w: 256, h: 224, aspect: { k: "pixel", n: 8, d: 7 },
+      variants: [{ label: "hi-res", w: 512, h: 448 }] },
+    { id: "md",   name: "Mega Drive",     sub: "MD",       w: 320, h: 224, aspect: { k: "display", n: 4, d: 3 },
+      variants: [{ label: "256 mode", w: 256, h: 224 }] },
+    { id: "sms",  name: "Master System",  sub: "SMS",      w: 256, h: 192, aspect: { k: "pixel", n: 8, d: 7 } },
+  ];
+
+  // --- slot2_retro::Aspect::display ---------------------------------------
+  function displayAspect(aspect, w, h) {
+    if (aspect.k === "square") return [w, h];
+    if (aspect.k === "pixel") return [w * aspect.n, h * aspect.d];
+    return [aspect.n, aspect.d];
+  }
+
+  // --- slot2_gfx::place ----------------------------------------------------
+  function placeInteger(sw, sh, dw, dh) {
+    const s = Math.max(1, Math.min(Math.floor(dw / sw), Math.floor(dh / sh)));
+    const w = sw * s, h = sh * s;
+    return { x: Math.floor((dw - w) / 2), y: Math.floor((dh - h) / 2), w, h, scale: s };
+  }
+  function placeAspect(sw, sh, an, ad, dw, dh) {
+    const want = an / ad, have = dw / dh;
+    let w, h;
+    if (have > want) { h = dh; w = Math.round(dh * want); }
+    else { w = dw; h = Math.round(dw / want); }
+    return { x: Math.floor((dw - w) / 2), y: Math.floor((dh - h) / 2), w, h, scale: w / sw };
+  }
+
+  // The source the frontend actually places: overscan comes off first.
+  function shownSize(p, crop) {
+    if (p.crop && crop) return [p.w, p.h - 2 * p.crop];
+    return [p.w, p.h];
+  }
+
+  // How far the integer picture sits from the shape the console meant.
+  // Positive = too wide, negative = too narrow.
+  function shapeError(p, sw, sh) {
+    const [an, ad] = displayAspect(p.aspect, sw, sh);
+    return ((sw / sh) / (an / ad) - 1) * 100;
+  }
+
+  const fmtErr = (e) => Math.abs(e) < 0.05
+    ? "exact"
+    : `${Math.abs(e).toFixed(1)}% ${e > 0 ? "wide" : "narrow"}`;
+
+  const state = { platform: "gba", crop: true };
+
+  // --- controls ------------------------------------------------------------
+  const chipRow = document.getElementById("platformChips");
+  PLATFORMS.forEach((p) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip";
+    b.id = "chip-" + p.id;
+    b.innerHTML = `${p.name}<span class="sub">${p.w}×${p.h}</span>`;
+    b.addEventListener("click", () => { state.platform = p.id; render(); });
+    chipRow.appendChild(b);
+  });
+  const cropBtn = document.getElementById("cropToggle");
+  cropBtn.addEventListener("click", () => { state.crop = !state.crop; render(); });
+
+  // --- the three screens ---------------------------------------------------
+  function renderScreens() {
+    const p = PLATFORMS.find((x) => x.id === state.platform);
+    const [sw, sh] = shownSize(p, state.crop);
+    const err = shapeError(p, sw, sh);
+    const host = document.getElementById("screens");
+    host.innerHTML = "";
+
+    GEOMETRIES.forEach((g) => {
+      const [an, ad] = displayAspect(p.aspect, sw, sh);
+      const i = placeInteger(sw, sh, g.w, g.h);
+      const a = placeAspect(sw, sh, an, ad, g.w, g.h);
+      const iFill = (i.w * i.h) / (g.w * g.h) * 100;
+      const aFill = (a.w * a.h) / (g.w * g.h) * 100;
+      const safeX = Math.floor((g.w - 640) / 2), safeY = Math.floor((g.h - 480) / 2);
+
+      const card = document.createElement("div");
+      card.className = "screen";
+      card.innerHTML = `
+        <header>
+          <h2>${g.w}×${g.h}</h2>
+          <div class="devices">${g.devices.join("<br>")}</div>
+        </header>
+        <svg class="stage" viewBox="0 0 ${g.w} ${g.h}" role="img"
+             aria-label="${p.name} on a ${g.w} by ${g.h} panel: integer ${i.scale} times, aspect fit ${a.scale.toFixed(2)} times">
+          <rect class="panel" x="0" y="0" width="${g.w}" height="${g.h}"/>
+          <rect class="int" x="${i.x}" y="${i.y}" width="${i.w}" height="${i.h}"/>
+          <rect class="asp" x="${a.x}" y="${a.y}" width="${a.w}" height="${a.h}"/>
+          <rect class="safe" x="${safeX}" y="${safeY}" width="640" height="480"/>
+          <text class="mark" x="${i.x + i.w / 2}" y="${i.y + i.h / 2 + 14}"
+                text-anchor="middle" font-size="40">${i.scale}×</text>
+        </svg>
+        <div class="readout">
+          <div class="row int">
+            <span class="k">Int</span>
+            <span class="v">${i.scale}× · ${i.w}×${i.h}</span>
+            <span class="m">${iFill.toFixed(0)}% of panel</span>
+          </div>
+          <div class="row asp">
+            <span class="k">Asp</span>
+            <span class="v">${a.scale.toFixed(2)}× · ${a.w}×${a.h}</span>
+            <span class="m">${aFill.toFixed(0)}% of panel</span>
+          </div>
+        </div>
+        <p class="verdict">${verdict(p, i, a, err, g)}</p>`;
+      host.appendChild(card);
+    });
+  }
+
+  function verdict(p, i, a, err, g) {
+    const bits = [];
+    const gap = a.scale - i.scale;
+    if (Math.abs(err) < 0.05) {
+      bits.push(`Square pixels, so the integer picture is already the right shape — AspectFit only stretches it ${gap > 0.01 ? `a further <b>${gap.toFixed(2)}×</b>` : "no further"}.`);
+    } else {
+      bits.push(`Integer comes out <b>${fmtErr(err)}</b>; AspectFit fixes the shape at <b>${a.scale.toFixed(2)}×</b>, which is not a whole number and so is filtered.`);
+    }
+    if (i.w > g.w || i.h > g.h) bits.push(" The frame is larger than the panel and is cropped.");
+    return bits.join(" ");
+  }
+
+  // --- the full matrix -----------------------------------------------------
+  function renderMatrix() {
+    const t = document.getElementById("matrix");
+    let head = '<thead><tr><th scope="col">Console</th><th scope="col">Source</th><th scope="col">Shape</th>';
+    GEOMETRIES.forEach((g) => { head += `<th scope="col">${g.w}×${g.h}</th>`; });
+    head += "</tr></thead>";
+
+    let body = "<tbody>";
+    PLATFORMS.forEach((p) => {
+      const rows = [{ label: p.name, w: p.w, h: p.h, crop: p.crop, variant: false }]
+        .concat((p.variants || []).map((v) => ({ label: v.label, w: v.w, h: v.h, variant: true })));
+
+      rows.forEach((r) => {
+        const sw = r.w;
+        const sh = r.crop && state.crop ? r.h - 2 * r.crop : r.h;
+        const [an, ad] = displayAspect(p.aspect, sw, sh);
+        const err = shapeError(p, sw, sh);
+        const shapeName = p.aspect.k === "square" ? "1:1 pixels"
+          : p.aspect.k === "pixel" ? `${p.aspect.n}:${p.aspect.d} pixels`
+            : `${p.aspect.n}:${p.aspect.d} display`;
+
+        body += `<tr class="${r.variant ? "variant" : ""}"><th scope="row">${r.label}</th>`;
+        body += `<td class="num">${sw}×${sh}${r.crop && state.crop ? " <span style=\"color:var(--ink-faint)\">cropped</span>" : ""}</td>`;
+        body += `<td>${shapeName} <span style="color:var(--ink-faint)">· ${fmtErr(err)}</span></td>`;
+        GEOMETRIES.forEach((g) => {
+          const i = placeInteger(sw, sh, g.w, g.h);
+          const a = placeAspect(sw, sh, an, ad, g.w, g.h);
+          body += `<td class="num"><span class="i">${i.scale}×</span> <span class="a">/ ${a.scale.toFixed(2)}×</span></td>`;
+        });
+        body += "</tr>";
+      });
+    });
+    body += "</tbody>";
+    t.innerHTML = head + body;
+  }
+
+  function render() {
+    PLATFORMS.forEach((p) => {
+      document.getElementById("chip-" + p.id)
+        .setAttribute("aria-pressed", String(p.id === state.platform));
+    });
+    cropBtn.setAttribute("aria-pressed", String(state.crop));
+    renderScreens();
+    renderMatrix();
+  }
+
+  render();
+</script>
+
+</body>
+</html>
