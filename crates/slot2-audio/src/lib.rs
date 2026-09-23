@@ -17,6 +17,7 @@ pub mod alsa;
 pub mod host;
 pub mod resample;
 pub mod ring;
+pub mod sfx;
 pub mod volume;
 
 pub use alsa::AlsaSink;
@@ -24,6 +25,7 @@ pub use alsa::AlsaSink;
 pub use host::HostSink;
 pub use resample::{drc_trim, Resampler, DRC_MAX};
 pub use ring::{Consumer, Producer, Ring};
+pub use sfx::Sfx;
 pub use volume::Volume;
 
 use std::fmt;

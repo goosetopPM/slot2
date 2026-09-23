@@ -91,6 +91,9 @@ pub struct App {
     refusal: Option<slot2_ui::refusal::Refusal>,
     /// What the player is being told, if anything.
     toast: Option<slot2_ui::toast::Toast>,
+    /// Whether the clip for the animation in progress has been fired. The contacts happen
+    /// once per insert, and so does the noise they make.
+    sfx_fired: bool,
 }
 
 impl App {
@@ -141,6 +144,7 @@ impl App {
             anim: 0.0,
             refusal: None,
             toast: None,
+            sfx_fired: false,
         };
         if screen == Screen::List {
             app.rescan();
@@ -171,6 +175,17 @@ impl App {
     /// The message on screen, by its i18n key, and `None` when there is none.
     pub fn toast_key(&self) -> Option<&str> {
         self.toast.as_ref().map(|t| t.key())
+    }
+
+    /// Put `clip` in front of the sink, whole, now.
+    ///
+    /// Written in one go rather than fed a frame at a time, because the frame after this one
+    /// may be the one that loads a core — a second inside `dlopen` on the device. The sink
+    /// has its own thread and plays what is in the ring regardless of what the main thread is
+    /// doing, so a clip that is already there survives the stall and a clip being dripped in
+    /// would not.
+    fn play(&mut self, clip: slot2_audio::Sfx) {
+        todo!()
     }
 
     pub fn shelf_len(&self) -> usize {
