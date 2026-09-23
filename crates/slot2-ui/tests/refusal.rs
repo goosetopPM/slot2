@@ -66,7 +66,10 @@ fn a_refusal_shakes_and_decays() {
         }
         last = o;
     }
-    assert!(signs >= 4, "it crossed centre {signs} times — that is a slide");
+    assert!(
+        signs >= 4,
+        "it crossed centre {signs} times — that is a slide"
+    );
     assert!(late < early * 0.5, "it did not decay: {early} then {late}");
 }
 
@@ -77,7 +80,11 @@ fn a_refusal_that_is_never_ticked_is_still_finite() {
     assert!(r.offset().is_finite());
     let mut r = Refusal::new();
     r.tick(f32::INFINITY);
-    assert!(r.offset().is_finite(), "offset {} after a bad dt", r.offset());
+    assert!(
+        r.offset().is_finite(),
+        "offset {} after a bad dt",
+        r.offset()
+    );
     assert!(!r.active());
 }
 
@@ -236,6 +243,43 @@ fn a_toast_is_centred_and_stays_on_the_panel() {
 }
 
 #[test]
+fn a_name_nobody_agreed_the_length_of_still_fits() {
+    // The gap the first version of this contract left. Its "long" title was forty
+    // characters, which fits a 640 panel with room to spare, so the test passed on code that
+    // centred a plate of whatever width the text came out at — and a real filename is longer
+    // than that. Off both edges, the part of the message that gets cut is the game's name.
+    let long = "Shin Megami Tensei Devil Survivor Overclocked Special Edition \
+                Director's Cut (USA, Europe) (Rev 2)";
+    for g in GEOMETRIES {
+        let safe = SafeArea::for_geometry(g);
+        let mut t = Toast::new(
+            "cart-broken",
+            vec![("title".to_string(), slot2_i18n::Arg::Str(long.into()))],
+        );
+        t.tick(TOAST_FADE_S);
+        let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+        let mut c = ctx();
+        t.draw(&mut canvas, &mut c, &safe);
+
+        let (mut left, mut right) = (f32::INFINITY, f32::NEG_INFINITY);
+        for op in canvas.frame() {
+            let (x, w) = match op {
+                Op::Rect { x, w, .. } | Op::Image { x, w, .. } => (*x, *w),
+                _ => continue,
+            };
+            left = left.min(x);
+            right = right.max(x + w);
+        }
+        assert!(left.is_finite(), "{g:?}: nothing drawn");
+        assert!(
+            left >= -0.5 && right <= safe.panel_w as f32 + 0.5,
+            "{g:?}: a long name ran from {left} to {right} on a {}-wide panel",
+            safe.panel_w
+        );
+    }
+}
+
+#[test]
 fn a_toast_has_something_behind_it() {
     // It is drawn over a wallpaper and over the carts. Text alone on top of artwork is text
     // nobody can read.
@@ -280,5 +324,8 @@ fn a_toast_does_not_rasterise_every_frame() {
         .skip(warm)
         .filter(|o| matches!(o, Op::UploadAlpha8 { .. } | Op::UploadRgba8 { .. }))
         .count();
-    assert!(uploads <= 2, "three seconds of toast uploaded {uploads} times");
+    assert!(
+        uploads <= 2,
+        "three seconds of toast uploaded {uploads} times"
+    );
 }

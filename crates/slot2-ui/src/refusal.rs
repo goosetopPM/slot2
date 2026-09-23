@@ -28,17 +28,17 @@ pub struct Refusal {
 impl Refusal {
     /// A refusal starting now.
     pub fn new() -> Refusal {
-        todo!()
+        Refusal { age: 0.0 }
     }
 
     /// Advance it. `dt` in seconds.
     pub fn tick(&mut self, dt: f32) {
-        todo!()
+        self.age += dt;
     }
 
     /// True while it is still moving.
     pub fn active(&self) -> bool {
-        todo!()
+        self.age < REFUSAL_S
     }
 
     /// Horizontal pixels off centre, decaying to nothing.
@@ -47,6 +47,12 @@ impl Refusal {
     /// knock and everything after it is settling. Starting at zero would make the frame the
     /// action was refused on the one frame that did not move.
     pub fn offset(&self) -> f32 {
-        todo!()
+        if !self.active() {
+            return 0.0;
+        }
+        let t = self.age / REFUSAL_S;
+        let decay = 1.0 - t;
+        let phase = self.age * SHAKE_HZ * 2.0 * std::f32::consts::PI;
+        SHAKE_PX * phase.cos() * decay
     }
 }

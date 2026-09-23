@@ -167,6 +167,7 @@ pub enum Op {
 #[derive(Debug)]
 pub struct RecordingCanvas {
     size: (u32, u32),
+    origin: (f32, f32),
     next: u32,
     /// What each texture was uploaded at, so `update_rgba8` can refuse a size change the
     /// way a real canvas does.
@@ -181,6 +182,7 @@ impl RecordingCanvas {
             next: 1,
             sizes: std::collections::HashMap::new(),
             ops: Vec::new(),
+            origin: (0.0, 0.0),
         }
     }
 
@@ -235,9 +237,18 @@ impl Canvas for RecordingCanvas {
         self.sizes.remove(&tex);
         self.ops.push(Op::Free(tex));
     }
+    fn set_origin(&mut self, x: f32, y: f32) {
+        self.origin = (x, y);
+    }
 
     fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
-        self.ops.push(Op::Rect { x, y, w, h, color });
+        self.ops.push(Op::Rect {
+            x: x + self.origin.0,
+            y: y + self.origin.1,
+            w,
+            h,
+            color,
+        });
     }
 
     fn image(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, tint: Color) {
@@ -248,8 +259,8 @@ impl Canvas for RecordingCanvas {
     fn image_uv(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], tint: Color) {
         self.ops.push(Op::Image {
             tex,
-            x,
-            y,
+            x: x + self.origin.0,
+            y: y + self.origin.1,
             w,
             h,
             uv,
@@ -300,5 +311,21 @@ mod tests {
     #[should_panic(expected = "alpha8 upload size")]
     fn recording_canvas_checks_upload_sizes() {
         RecordingCanvas::new(1, 1).upload_alpha8(2, 2, &[0; 3]);
+    }
+    #[test]
+    fn recording_canvas_applies_origin_to_ops() {
+        let mut c = RecordingCanvas::new(100, 100);
+        c.set_origin(10.0, 20.0);
+        c.rect(1.0, 2.0, 3.0, 4.0, Color::WHITE);
+        assert_eq!(
+            c.ops.last().unwrap(),
+            &Op::Rect {
+                x: 11.0,
+                y: 22.0,
+                w: 3.0,
+                h: 4.0,
+                color: Color::WHITE
+            }
+        );
     }
 }

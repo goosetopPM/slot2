@@ -34,6 +34,9 @@ pub const TOAST_ABOVE_SLOT: f32 = 46.0;
 const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 7.0;
 
+/// The gutter the toast keeps either side of it, per DESIGN §5.
+const MARGIN: f32 = 16.0;
+
 const PLATE: Color = Color::from_rgb8(0x1E, 0x21, 0x26);
 
 /// One message on screen, decaying on its own clock.
@@ -46,26 +49,82 @@ pub struct Toast {
 impl Toast {
     /// A toast for `key`, starting now. `args` are the message's variables, by name.
     pub fn new(key: impl Into<String>, args: Vec<(String, Arg)>) -> Toast {
-        todo!()
+        Toast {
+            key: key.into(),
+            args,
+            age: 0.0,
+        }
     }
 
     /// Advance it. `dt` in seconds.
     pub fn tick(&mut self, dt: f32) {
-        todo!()
+        self.age += dt;
+    }
+    pub fn key(&self) -> &str {
+        &self.key
     }
 
     /// True once it has faded out and the caller should drop it.
     pub fn done(&self) -> bool {
-        todo!()
+        self.age >= TOAST_S
     }
 
     /// How lit it is: up through the fade in, one for most of its life, down at the end.
     pub fn alpha(&self) -> f32 {
-        todo!()
+        if self.age < TOAST_FADE_S {
+            self.age / TOAST_FADE_S
+        } else if self.age > TOAST_S - TOAST_FADE_S {
+            ((TOAST_S - self.age) / TOAST_FADE_S).max(0.0)
+        } else {
+            1.0
+        }
     }
 
     /// Draw it, plate and all. Does nothing once it is `done`.
     pub fn draw(&self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, safe: &SafeArea) {
-        todo!()
+        if self.done() {
+            return;
+        }
+
+        let args: Vec<(&str, slot2_i18n::Arg)> = self
+            .args
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect();
+        let spans = ctx.i18n.spans(&self.key, &args);
+
+        // Shrink to fit rather than run off the sides.
+        //
+        // A game's name comes from a filename and has no length anyone agreed to — "Shin
+        // Megami Tensei Devil Survivor Overclocked Special Edition" is 586 px at the body
+        // size, which with the padding is already wider than the usable part of a 640 panel.
+        // Centring a plate wider than the screen puts the first and last words off both
+        // edges, so the one part of the message that is always cut is the part that says
+        // which game.
+        //
+        // Scaled rather than wrapped or clipped: a title long enough to need this was never
+        // going to be read at a glance, and small text beats text that leaves the screen.
+        // Measured again afterwards because a glyph's advance is not exactly linear in the
+        // size it is laid out at, and "nearly fits" is the same bug.
+        let max_w = safe.panel_w as f32 - 2.0 * MARGIN - 2.0 * PAD_X;
+        let mut px = crate::PX_BODY;
+        let mut sw = crate::face::spans_width(ctx, &spans, px);
+        if sw > max_w {
+            px *= max_w / sw;
+            sw = crate::face::spans_width(ctx, &spans, px);
+        }
+
+        let w = sw + 2.0 * PAD_X;
+        let h = px + 2.0 * PAD_Y;
+
+        let x = ((safe.panel_w as f32 - w) / 2.0).max(MARGIN);
+        let y = safe.panel_h as f32 - MOUTH_H - TOAST_ABOVE_SLOT - h;
+
+        let alpha = self.alpha();
+        let color = slot2_gfx::Color::WHITE.with_alpha(alpha);
+        let plate = PLATE.with_alpha(alpha);
+
+        canvas.rect(x, y, w, h, plate);
+        crate::draw_spans(canvas, ctx, &spans, px, x + PAD_X, y + PAD_Y, color);
     }
 }

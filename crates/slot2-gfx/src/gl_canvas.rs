@@ -60,6 +60,7 @@ pub struct GlCanvas {
     /// tell a rewrite from a resize.
     textures: HashMap<TexId, (gl::types::GLuint, u32, u32)>,
     next_tex_id: u32,
+    origin: (f32, f32),
 }
 
 impl GlCanvas {
@@ -192,6 +193,7 @@ impl GlCanvas {
             vertices: Vec::with_capacity(600),
             textures: HashMap::new(),
             next_tex_id: 1,
+            origin: (0.0, 0.0),
         };
 
         // The offscreen target is bound but nothing has told GL how big it is. A fresh
@@ -441,6 +443,13 @@ impl Canvas for GlCanvas {
     fn image(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, tint: Color) {
         self.image_uv(tex, x, y, w, h, [0.0, 0.0, 1.0, 1.0], tint)
     }
+    fn set_origin(&mut self, x: f32, y: f32) {
+        if self.origin != (x, y) {
+            self.flush();
+            self.origin = (x, y);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn image_uv(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], tint: Color) {
         if tex != self.batch_tex {
@@ -449,33 +458,34 @@ impl Canvas for GlCanvas {
         }
         let c = [tint.r, tint.g, tint.b, tint.a];
         let [u0, v0, u1, v1] = uv;
+        let (ox, oy) = self.origin;
         self.vertices.push(Vertex {
-            pos: [x, y],
+            pos: [x + ox, y + oy],
             uv: [u0, v0],
             col: c,
         });
         self.vertices.push(Vertex {
-            pos: [x + w, y],
+            pos: [x + w + ox, y + oy],
             uv: [u1, v0],
             col: c,
         });
         self.vertices.push(Vertex {
-            pos: [x, y + h],
+            pos: [x + ox, y + h + oy],
             uv: [u0, v1],
             col: c,
         });
         self.vertices.push(Vertex {
-            pos: [x + w, y],
+            pos: [x + w + ox, y + oy],
             uv: [u1, v0],
             col: c,
         });
         self.vertices.push(Vertex {
-            pos: [x + w, y + h],
+            pos: [x + w + ox, y + h + oy],
             uv: [u1, v1],
             col: c,
         });
         self.vertices.push(Vertex {
-            pos: [x, y + h],
+            pos: [x + ox, y + h + oy],
             uv: [u0, v1],
             col: c,
         });

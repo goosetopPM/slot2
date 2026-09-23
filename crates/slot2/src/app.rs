@@ -162,12 +162,12 @@ impl App {
     /// How far the screen is knocked off centre this frame, and zero when nothing was
     /// refused. A flinch is the whole of the answer to an action that cannot happen.
     pub fn refusal_offset(&self) -> f32 {
-        todo!()
+        self.refusal.as_ref().map_or(0.0, |r| r.offset())
     }
 
     /// The message on screen, by its i18n key, and `None` when there is none.
     pub fn toast_key(&self) -> Option<&str> {
-        todo!()
+        self.toast.as_ref().map(|t| t.key())
     }
 
     pub fn shelf_len(&self) -> usize {
@@ -236,6 +236,19 @@ impl App {
             // frontend will notice, instead of the row.
             let dt = dt.min(1.0 / 30.0);
             self.shelf_view.shelf.update(dt);
+            if let Some(r) = self.refusal.as_mut() {
+                r.tick(dt);
+            }
+            if self.refusal.as_ref().is_some_and(|r| !r.active()) {
+                self.refusal = None;
+            }
+
+            if let Some(t) = self.toast.as_mut() {
+                t.tick(dt);
+            }
+            if self.toast.as_ref().is_some_and(|t| t.done()) {
+                self.toast = None;
+            }
 
             if matches!(self.screen, Screen::Inserting | Screen::Ejecting) {
                 self.anim += dt;
@@ -357,7 +370,20 @@ impl App {
                 self.pending_consumer = Some(consumer);
                 self.sink_request = Some(SinkRequest::Open);
             }
-            Err(e) => eprintln!("slot2: cannot play {}: {e}", cart.title),
+            Err(e) => {
+                eprintln!("slot2: cannot play {}: {e}", cart.title);
+                match e {
+                    crate::session::Error::NoCore(_) => {
+                        self.toast = Some(slot2_ui::toast::Toast::new("core-missing", Vec::new()));
+                    }
+                    _ => {
+                        self.toast = Some(slot2_ui::toast::Toast::new(
+                            "cart-broken",
+                            vec![("title".to_string(), slot2_i18n::Arg::Str(cart.title))],
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -401,6 +427,9 @@ impl App {
                 Button::A if !self.carts.is_empty() => {
                     self.screen = Screen::Inserting;
                     self.anim = 0.0;
+                }
+                Button::A => {
+                    self.refusal = Some(slot2_ui::refusal::Refusal::new());
                 }
                 _ => {}
             },
@@ -453,6 +482,7 @@ impl App {
     }
 
     pub fn draw(&mut self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, now: Instant) {
+        canvas.set_origin(self.refusal_offset(), 0.0);
         match self.screen {
             Screen::Splash => self.splash.draw(canvas, ctx),
             Screen::List => {
@@ -501,6 +531,11 @@ impl App {
         if let Screen::Power(menu) = self.screen {
             menu.draw(canvas, ctx);
         }
+        let safe = ctx.safe;
+        if let Some(t) = self.toast.as_ref() {
+            t.draw(canvas, ctx, &safe);
+        }
+        canvas.set_origin(0.0, 0.0);
     }
 }
 

@@ -26,7 +26,8 @@ fn app(n: usize) -> (App, PathBuf) {
     card.ensure_layout();
     for g in 0..n {
         std::fs::write(
-            card.games_dir(Platform::Gba).join(format!("Game {g:02}.gba")),
+            card.games_dir(Platform::Gba)
+                .join(format!("Game {g:02}.gba")),
             b"rom",
         )
         .unwrap();
