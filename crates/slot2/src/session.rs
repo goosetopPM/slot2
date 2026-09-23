@@ -148,17 +148,13 @@ impl Session {
             return Err(Error::NoCore(dylib));
         }
 
-        let mut options: Vec<(String, String)> = def
-            .options
+        // A BIOS on the card is the player asking for the real boot sequence; none means
+        // the core's own. Nothing else about the launch depends on it.
+        let bios_present = def
+            .bios
             .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        // Skip BIOS if it doesn't exist
-        if def.platform == slot2_retro::Platform::Gba
-            && !card.bios_dir().join("gba_bios.bin").exists()
-        {
-            options.push(("mgba_skip_bios".to_string(), "ON".to_string()));
-        }
+            .any(|name| card.bios_dir().join(name).exists());
+        let options = slot2_retro::options_for(retro_platform, bios_present);
 
         let env = slot2_retro::Env {
             system_dir: card.bios_dir(),

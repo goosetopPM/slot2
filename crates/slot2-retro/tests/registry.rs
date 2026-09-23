@@ -1,6 +1,8 @@
 //! The registry's contract. Task 09 makes these pass without editing this file.
 
-use slot2_retro::{def, joypad_bit, mask_for, JoypadMask, LogicalButton as B, Platform, PLATFORMS};
+use slot2_retro::{
+    def, joypad_bit, mask_for, options_for, JoypadMask, LogicalButton as B, Platform, PLATFORMS,
+};
 
 #[test]
 fn every_platform_has_an_entry_and_a_core_file_name() {
@@ -26,10 +28,11 @@ fn every_platform_has_an_entry_and_a_core_file_name() {
         def(Platform::Sms).default_core,
         "GPGX covers both"
     );
-    assert!(def(Platform::Gba)
-        .options
+    // The skip lives in `options_for` now, not in the static table: whether the intro is
+    // skipped depends on whether a BIOS is on the card, which the table cannot know.
+    assert!(options_for(Platform::Gba, false)
         .iter()
-        .any(|(k, _)| *k == "mgba_skip_bios"));
+        .any(|(k, _)| k == "mgba_skip_bios"));
     assert!(def(Platform::Gba).bios.contains(&"gba_bios.bin"));
     assert!(def(Platform::Nes).bios.is_empty());
 }
@@ -83,7 +86,10 @@ fn a_mega_drive_pad_has_all_six_buttons() {
     assert_eq!(joypad_bit(Platform::Md, B::L1), Some(JoypadMask::L));
     assert_eq!(joypad_bit(Platform::Md, B::X), Some(JoypadMask::X));
     assert_eq!(joypad_bit(Platform::Md, B::R1), Some(JoypadMask::R));
-    assert_eq!(joypad_bit(Platform::Md, B::Select), Some(JoypadMask::SELECT));
+    assert_eq!(
+        joypad_bit(Platform::Md, B::Select),
+        Some(JoypadMask::SELECT)
+    );
     assert_eq!(joypad_bit(Platform::Md, B::Start), Some(JoypadMask::START));
 
     // Every one of the eight is a different bit: a mapping that doubles up silently makes
@@ -114,7 +120,6 @@ fn nothing_on_the_face_of_the_handheld_goes_nowhere_on_a_mega_drive() {
     }
 }
 
-
 #[test]
 fn masks_combine_and_ignore_unmapped_buttons() {
     let m = mask_for(Platform::Gba, [B::A, B::Right, B::L1]);
@@ -122,4 +127,66 @@ fn masks_combine_and_ignore_unmapped_buttons() {
     let m = mask_for(Platform::Gb, [B::A, B::X, B::L1]);
     assert_eq!(m.0, JoypadMask::A, "X and L1 do not exist on a Game Boy");
     assert_eq!(mask_for(Platform::Nes, []).0, 0);
+}
+
+#[test]
+fn a_bios_on_the_card_turns_the_real_boot_sequence_on() {
+    let find = |opts: &[(String, String)], key: &str| {
+        opts.iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| panic!("{key} not set: {opts:?}"))
+    };
+
+    // The Game Boys and the GBA run on mGBA, which boots high-level without a BIOS. What
+    // the file changes is whether the player watches the logo scroll.
+    for p in [Platform::Gb, Platform::Gbc, Platform::Gba] {
+        assert_eq!(find(&options_for(p, true), "mgba_skip_bios"), "OFF");
+        assert_eq!(find(&options_for(p, false), "mgba_skip_bios"), "ON");
+    }
+
+    // Genesis Plus GX will not touch a boot ROM unless it is told to.
+    for p in [Platform::Md, Platform::Sms] {
+        assert_eq!(find(&options_for(p, true), "genesis_plus_gx_bios"), "enabled");
+        assert_eq!(
+            find(&options_for(p, false), "genesis_plus_gx_bios"),
+            "disabled"
+        );
+    }
+
+    // The NES and SNES cores have no boot ROM to offer, so nothing changes either way.
+    for p in [Platform::Nes, Platform::Snes] {
+        assert_eq!(options_for(p, true), options_for(p, false));
+    }
+
+    // Every platform that names a BIOS file gets asked about it, and every platform that
+    // does not is left alone.
+    for d in PLATFORMS {
+        let differs = options_for(d.platform, true) != options_for(d.platform, false);
+        assert_eq!(
+            differs,
+            !d.bios.is_empty(),
+            "{:?} names {:?} but its options do not depend on it",
+            d.platform,
+            d.bios
+        );
+    }
+}
+
+#[test]
+fn the_nes_hands_over_all_240_lines_so_the_display_can_crop_them() {
+    // FCEUmm crops eight rows top and bottom by default. Cropping is a display decision
+    // here, in one place for every core, so the core is told not to — and the platform's
+    // native size is the uncropped one, with the eight rows recorded as overscan.
+    let nes = def(Platform::Nes);
+    assert_eq!(nes.native, (256, 240));
+    assert_eq!(nes.overscan.top, 8);
+    assert_eq!(nes.overscan.bottom, 8);
+    for key in ["fceumm_overscan_v_top", "fceumm_overscan_v_bottom"] {
+        assert_eq!(
+            nes.options.iter().find(|(k, _)| *k == key).map(|(_, v)| *v),
+            Some("0"),
+            "{key} must be off so the crop is not applied twice"
+        );
+    }
 }

@@ -134,7 +134,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
     PlatformDef {
         platform: Platform::Gb,
         default_core: Core::Mgba,
-        options: &[("mgba_skip_bios", "ON")],
+        options: &[],
         bios: &["gb_bios.bin"],
         native: (160, 144),
         aspect: Aspect::Square,
@@ -143,7 +143,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
     PlatformDef {
         platform: Platform::Gbc,
         default_core: Core::Mgba,
-        options: &[("mgba_skip_bios", "ON")],
+        options: &[],
         bios: &["gbc_bios.bin"],
         native: (160, 144),
         aspect: Aspect::Square,
@@ -152,7 +152,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
     PlatformDef {
         platform: Platform::Gba,
         default_core: Core::Mgba,
-        options: &[("mgba_skip_bios", "ON")],
+        options: &[],
         bios: &["gba_bios.bin"],
         native: (240, 160),
         aspect: Aspect::Square,
@@ -161,7 +161,15 @@ pub const PLATFORMS: &[PlatformDef] = &[
     PlatformDef {
         platform: Platform::Nes,
         default_core: Core::Fceumm,
-        options: &[],
+        // FCEUmm crops eight rows top and bottom by default and would hand over 256x224.
+        // Turning that off and cropping in the display layer keeps one mechanism instead of
+        // two: the same policy for every core, toggled instantly rather than through a core
+        // option, and the same answer for cores that offer no such knob. Sixteen rows of
+        // texture is not a cost worth splitting the logic over.
+        options: &[
+            ("fceumm_overscan_v_top", "0"),
+            ("fceumm_overscan_v_bottom", "0"),
+        ],
         bios: &[],
         native: (256, 240),
         aspect: Aspect::Pixel { num: 8, den: 7 },
@@ -180,7 +188,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         platform: Platform::Md,
         default_core: Core::GenesisPlusGx,
         options: &[],
-        bios: &[],
+        bios: &["bios_MD.bin"],
         native: (320, 224),
         aspect: Aspect::Display { num: 4, den: 3 },
         overscan: Overscan::NONE,
@@ -195,6 +203,43 @@ pub const PLATFORMS: &[PlatformDef] = &[
         overscan: Overscan::NONE,
     },
 ];
+
+/// The options to launch this platform with, given whether one of its BIOS files was found
+/// on the card.
+///
+/// A BIOS is optional for every platform here — the cores all emulate one well enough to
+/// play without — so the question is not whether the game runs but whether the player sees
+/// the real boot sequence. Someone who went to the trouble of putting `gb_bios.bin` on the
+/// card wants the Game Boy logo to scroll down; someone who did not should not sit through
+/// a core's imitation of it. So the presence of the file *is* the setting, and there is
+/// nothing to configure until a player wants to disagree with it.
+pub fn options_for(platform: Platform, bios_present: bool) -> Vec<(String, String)> {
+    let def = def(platform);
+    let mut out: Vec<(String, String)> = def
+        .options
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    let mut set = |k: &str, v: &str| out.push((k.to_string(), v.to_string()));
+    match def.default_core {
+        // mGBA looks for a BIOS on its own (`mgba_use_bios` is ON by default) and falls
+        // back to its own high-level boot when there is none. Skipping the intro is about
+        // the intro, not about the BIOS.
+        Core::Mgba | Core::Gpsp => {
+            set("mgba_skip_bios", if bios_present { "OFF" } else { "ON" });
+        }
+        // Genesis Plus GX will not touch a boot ROM unless told to, and says so plainly.
+        Core::GenesisPlusGx => {
+            set(
+                "genesis_plus_gx_bios",
+                if bios_present { "enabled" } else { "disabled" },
+            );
+        }
+        Core::Fceumm | Core::Snes9x => {}
+    }
+    out
+}
 
 pub fn def(platform: Platform) -> &'static PlatformDef {
     PLATFORMS

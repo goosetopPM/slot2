@@ -71,7 +71,9 @@ fn local_rom_dirs() -> Vec<PathBuf> {
 fn local_rom(platform: Platform) -> Option<(Vec<u8>, &'static str)> {
     let exts = exts(platform);
     for dir in local_rom_dirs() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut found: Vec<_> = entries
             .flatten()
             .map(|e| e.path())
@@ -141,7 +143,11 @@ fn load(platform: Platform) -> Option<Core> {
     let def = slot2_retro::def(platform);
     let dylib = repo().join("vendor").join(def.default_core.file_name());
     if !dylib.is_file() {
-        eprintln!("{}: no {} — run build/cores.ps1", name(platform), dylib.display());
+        eprintln!(
+            "{}: no {} — run build/cores.ps1",
+            name(platform),
+            dylib.display()
+        );
         return None;
     }
     let Some((bytes, ext)) = rom_for(platform) else {
@@ -303,8 +309,20 @@ fn every_mapped_button_reaches_every_core() {
     let _serial = serial();
     use slot2_retro::LogicalButton as B;
     const BUTTONS: [B; 14] = [
-        B::A, B::B, B::X, B::Y, B::L1, B::R1, B::L2, B::R2,
-        B::Select, B::Start, B::Up, B::Down, B::Left, B::Right,
+        B::A,
+        B::B,
+        B::X,
+        B::Y,
+        B::L1,
+        B::R1,
+        B::L2,
+        B::R2,
+        B::Select,
+        B::Start,
+        B::Up,
+        B::Down,
+        B::Left,
+        B::Right,
     ];
     for p in ALL {
         let Some(mut core) = load(p) else { continue };

@@ -19,8 +19,8 @@ pub mod registry;
 
 pub use host::Core;
 pub use registry::{
-    def, joypad_bit, mask_for, Aspect, Core as CoreId, LogicalButton, Overscan, Platform,
-    PlatformDef, PLATFORMS,
+    def, joypad_bit, mask_for, options_for, Aspect, Core as CoreId, LogicalButton, Overscan,
+    Platform, PlatformDef, PLATFORMS,
 };
 
 use std::fmt;

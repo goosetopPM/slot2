@@ -68,7 +68,10 @@ pub fn snes() -> Vec<u8> {
     rom[0x7FDB] = 0x00; // version
 
     // Every vector points at the halt, so an unexpected interrupt cannot wander off.
-    for v in (0x7FE4..0x7FF0).step_by(2).chain((0x7FF4..0x8000).step_by(2)) {
+    for v in (0x7FE4..0x7FF0)
+        .step_by(2)
+        .chain((0x7FF4..0x8000).step_by(2))
+    {
         rom[v] = 0x00;
         rom[v + 1] = 0x80;
     }

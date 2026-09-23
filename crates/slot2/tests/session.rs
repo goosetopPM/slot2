@@ -45,12 +45,7 @@ fn core_dir() -> Option<PathBuf> {
 
 /// A context just real enough for `draw`, which only wants somewhere to measure text.
 fn ui_ctx() -> slot2_ui::UiCtx {
-    slot2_ui::UiCtx::new(
-        slot2_platform::detect().profile,
-        "en",
-        Vec::new(),
-        None,
-    )
+    slot2_ui::UiCtx::new(slot2_platform::detect().profile, "en", Vec::new(), None)
 }
 
 /// A card with the test ROM copied in as a GBA cart.
@@ -259,7 +254,6 @@ fn a_session_paces_and_produces_audio_at_the_sink_rate() {
     assert_eq!(dropped, 0, "a drained ring must never drop");
 }
 
-
 #[test]
 fn the_picture_lands_where_the_scale_policy_says() {
     let _serial = serial();
@@ -287,8 +281,15 @@ fn the_picture_lands_where_the_scale_policy_says() {
             _ => None,
         })
         .expect("the game was not drawn");
-    assert_eq!((image.0, image.1, image.2, image.3), (0.0, 0.0, 720.0, 480.0));
-    assert_eq!(image.4, [0.0, 0.0, 1.0, 1.0], "a GBA has no overscan to crop");
+    assert_eq!(
+        (image.0, image.1, image.2, image.3),
+        (0.0, 0.0, 720.0, 480.0)
+    );
+    assert_eq!(
+        image.4,
+        [0.0, 0.0, 1.0, 1.0],
+        "a GBA has no overscan to crop"
+    );
 
     // Fill takes the panel whatever the frame is; on this one it happens to agree with
     // Integer, so ask a geometry where it cannot.

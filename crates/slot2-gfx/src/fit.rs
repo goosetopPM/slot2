@@ -232,7 +232,12 @@ mod tests {
         assert_eq!(square, wide);
         assert_eq!(
             square,
-            Rect { x: 104, y: 0, w: 512, h: 480 }
+            Rect {
+                x: 104,
+                y: 0,
+                w: 512,
+                h: 480
+            }
         );
     }
 
@@ -240,9 +245,18 @@ mod tests {
     fn aspect_fit_corrects_non_square_pixels() {
         // 256x224 at 8:7 wants to be shown as 2048:1568 = 4:3.056..., so on a 720x480 panel
         // it is height-limited and comes out wider than 2x would make it.
-        let r = place(ScalePolicy::AspectFit, (256, 224), (256 * 8, 224 * 7), (720, 480));
+        let r = place(
+            ScalePolicy::AspectFit,
+            (256, 224),
+            (256 * 8, 224 * 7),
+            (720, 480),
+        );
         assert_eq!(r.h, 480);
-        assert!(r.w > 512, "aspect correction should widen past 2x, got {}", r.w);
+        assert!(
+            r.w > 512,
+            "aspect correction should widen past 2x, got {}",
+            r.w
+        );
         assert!(r.w <= 720, "and still fit, got {}", r.w);
         assert_eq!(r.x, (720 - r.w) / 2);
     }
@@ -255,27 +269,54 @@ mod tests {
         let narrow = place(ScalePolicy::AspectFit, (256, 224), (4, 3), (720, 480));
         let wide = place(ScalePolicy::AspectFit, (320, 224), (4, 3), (720, 480));
         assert_eq!(narrow, wide);
-        assert_eq!(narrow, Rect { x: 40, y: 0, w: 640, h: 480 });
+        assert_eq!(
+            narrow,
+            Rect {
+                x: 40,
+                y: 0,
+                w: 640,
+                h: 480
+            }
+        );
     }
 
     #[test]
     fn fill_takes_the_whole_panel() {
         assert_eq!(
             place(ScalePolicy::Fill, (256, 224), (4, 3), (720, 480)),
-            Rect { x: 0, y: 0, w: 720, h: 480 }
+            Rect {
+                x: 0,
+                y: 0,
+                w: 720,
+                h: 480
+            }
         );
     }
 
     #[test]
     fn a_frame_that_does_not_exist_yet_draws_nothing() {
-        for policy in [ScalePolicy::Integer, ScalePolicy::AspectFit, ScalePolicy::Fill] {
+        for policy in [
+            ScalePolicy::Integer,
+            ScalePolicy::AspectFit,
+            ScalePolicy::Fill,
+        ] {
             assert_eq!(
                 place(policy, (0, 0), (4, 3), (720, 480)),
-                Rect { x: 0, y: 0, w: 0, h: 0 }
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 0,
+                    h: 0
+                }
             );
             assert_eq!(
                 place(policy, (256, 224), (4, 3), (0, 0)),
-                Rect { x: 0, y: 0, w: 0, h: 0 }
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 0,
+                    h: 0
+                }
             );
         }
     }

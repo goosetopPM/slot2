@@ -306,9 +306,15 @@ fn host_sink_opens_and_plays_when_asked() {
 fn drc_is_neutral_at_half_and_bounded_at_the_ends() {
     assert_eq!(slot2_audio::drc_trim(500, 1000), 1.0);
     assert_eq!(slot2_audio::drc_trim(0, 1000), 1.0 + slot2_audio::DRC_MAX);
-    assert_eq!(slot2_audio::drc_trim(1000, 1000), 1.0 - slot2_audio::DRC_MAX);
+    assert_eq!(
+        slot2_audio::drc_trim(1000, 1000),
+        1.0 - slot2_audio::DRC_MAX
+    );
     // Past full (cannot happen, but the maths must not run away).
-    assert_eq!(slot2_audio::drc_trim(9000, 1000), 1.0 - slot2_audio::DRC_MAX);
+    assert_eq!(
+        slot2_audio::drc_trim(9000, 1000),
+        1.0 - slot2_audio::DRC_MAX
+    );
     // A ring that does not exist asks for no correction rather than dividing by zero.
     assert_eq!(slot2_audio::drc_trim(0, 0), 1.0);
 }
@@ -336,7 +342,12 @@ fn trim_changes_how_much_comes_out() {
     plain.process(&input, &mut a);
     fast.process(&input, &mut b);
 
-    assert!(b.len() > a.len(), "trimmed up should yield more: {} {}", b.len(), a.len());
+    assert!(
+        b.len() > a.len(),
+        "trimmed up should yield more: {} {}",
+        b.len(),
+        a.len()
+    );
     // …but only by about the trim, not by some multiple of it.
     let ratio = b.len() as f64 / a.len() as f64;
     assert!((ratio - 1.005).abs() < 0.002, "ratio {ratio}");
@@ -363,7 +374,10 @@ fn equal_rates_still_resample_when_trimmed() {
     r.set_output_trim(1.0 - slot2_audio::DRC_MAX);
     let mut out = Vec::new();
     let n = r.process(&input, &mut out);
-    assert!(n < 48_000, "trimmed down should shorten the stream, got {n}");
+    assert!(
+        n < 48_000,
+        "trimmed down should shorten the stream, got {n}"
+    );
     assert!(n > 47_000, "but only slightly, got {n}");
 }
 

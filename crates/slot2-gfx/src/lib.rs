@@ -24,9 +24,7 @@ mod fit;
 mod glfn;
 
 pub use canvas::{Canvas, Color, Op, RecordingCanvas, TexId};
-pub use fit::{
-    cropped_size, fit_rect, integer_fit_rect, place, sub_uv, Rect, ScalePolicy,
-};
+pub use fit::{cropped_size, fit_rect, integer_fit_rect, place, sub_uv, Rect, ScalePolicy};
 
 mod gl_canvas;
 pub use gl_canvas::GlCanvas;
