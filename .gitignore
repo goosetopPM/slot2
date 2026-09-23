@@ -19,3 +19,7 @@
 # free-gjc run logs
 /.gjc-logs
 
+
+# Real ROMs for the test suite: never committed.
+assets/test/local/*
+!assets/test/local/README.txt

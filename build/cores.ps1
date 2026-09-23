@@ -20,7 +20,7 @@
   Do just one side.
 #>
 param(
-    [string[]]$Core = @('mgba'),
+    [string[]]$Core = @('mgba', 'fceumm', 'snes9x', 'genesis_plus_gx'),
     [switch]$Force,
     [switch]$HostOnly,
     [switch]$DeviceOnly

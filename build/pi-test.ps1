@@ -43,7 +43,12 @@ if ($Setup) {
     $crateDirs = (Get-ChildItem crates -Directory | ForEach-Object { "$remote/crates/$($_.Name)" }) -join ' '
     ssh $Pi "sudo mkdir -p $remote/assets $remote/vendor $remote/bin $crateDirs && sudo chown -R `$USER $remote"
     if ($LASTEXITCODE -ne 0) { throw "could not create $remote (sudo password needed?)" }
-    scp -r assets/fonts assets/lang assets/test "${Pi}:$remote/assets/"
+    # assets/test/local is deliberately left behind: it holds real ROMs, which belong on
+    # this machine and nowhere else. The tests that want one skip when it is absent.
+    ssh $Pi "mkdir -p $remote/assets/test"
+    scp -r assets/fonts assets/lang "${Pi}:$remote/assets/"
+    $testFiles = Get-ChildItem assets/test -File
+    if ($testFiles) { scp $testFiles "${Pi}:$remote/assets/test/" }
     $so = Get-ChildItem vendor\*_libretro.so -ErrorAction SilentlyContinue
     if ($so) { scp $so "${Pi}:$remote/vendor/" }
     ssh $Pi "ls -R $remote | head -40"
