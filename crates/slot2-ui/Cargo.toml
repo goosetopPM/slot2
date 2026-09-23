@@ -7,6 +7,8 @@ license.workspace = true
 description = "Screens, platform skins, rasterised faces, span layout"
 
 [dependencies]
+resvg = { workspace = true }
+usvg = { workspace = true }
 # Only the Canvas trait and types; no window or GL backend is pulled in here.
 slot2-gfx = { workspace = true, default-features = false }
 slot2-text = { workspace = true }

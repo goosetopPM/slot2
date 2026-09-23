@@ -20,6 +20,12 @@ slot2-audio = { path = "crates/slot2-audio" }
 slot2-retro = { path = "crates/slot2-retro" }
 slot2-store = { path = "crates/slot2-store" }
 
+# The cart and port artwork is vector, drawn at whatever size a panel calls for. Both are
+# pure Rust, which is what makes them safe to cross-compile; no default features, so no
+# system font stack comes along (text in the artwork is our own to draw).
+resvg = { version = "0.45", default-features = false }
+usvg = { version = "0.45", default-features = false }
+
 # Device build: release + fat LTO in one codegen unit. Measured on the original slot to take
 # ~2% off a frame on the H700. Host release stays plain so an edit rebuilds in seconds.
 [profile.device]

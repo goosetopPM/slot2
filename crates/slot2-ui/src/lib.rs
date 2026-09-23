@@ -16,7 +16,9 @@ pub mod face;
 pub mod game_list;
 pub mod layout;
 pub mod power_menu;
+pub mod skin;
 pub mod splash;
+pub mod svg;
 
 pub use face::FaceCache;
 pub use game_list::GameList;
