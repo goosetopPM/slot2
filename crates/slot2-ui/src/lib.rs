@@ -18,11 +18,13 @@ pub mod insert;
 pub mod label;
 pub mod layout;
 pub mod power_menu;
+pub mod refusal;
 pub mod shelf;
 pub mod shelf_view;
 pub mod skin;
 pub mod splash;
 pub mod svg;
+pub mod toast;
 
 pub use art::ArtCache;
 pub use face::FaceCache;

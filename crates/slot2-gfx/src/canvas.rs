@@ -99,6 +99,20 @@ pub trait Canvas {
     /// Release a texture. Using the id afterwards is a logic error (drawn as nothing).
     fn free(&mut self, tex: TexId);
 
+    /// Shift everything drawn from here on by `(x, y)` panel pixels.
+    ///
+    /// Not a stack and not a transform: one offset, set by whoever is presenting the frame
+    /// and cleared by them. It exists because a refusal moves the *whole* screen, and the
+    /// alternative — an offset threaded through every screen's `draw` down to every cart —
+    /// is a parameter that every new screen has to remember to honour and that one of them
+    /// eventually will not.
+    ///
+    /// The default is to ignore it, so a canvas that cannot offset still draws. Every canvas
+    /// that a player looks through implements it.
+    fn set_origin(&mut self, x: f32, y: f32) {
+        let _ = (x, y);
+    }
+
     /// Solid rectangle, alpha-blended.
     fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color);
 

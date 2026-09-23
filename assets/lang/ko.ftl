@@ -37,3 +37,8 @@ hint-play = { BTN("a") } 실행
 hint-switch = { BTN("l1") }{ BTN("r1") } 기종
 hint-back-to-list = { BTN("menu") } 길게 눌러 종료
 
+
+# A cart the frontend will not play, and why. The player can fix both of these, which is the
+# whole reason there are words here and not only the flinch.
+core-missing = 이 선반의 코어가 없습니다. 카드의 System/cores에 넣어 주세요.
+cart-broken = { JOSA($title, "을/를") } 시작하지 못했습니다.

@@ -40,3 +40,8 @@ hint-play = { BTN("a") } play
 hint-switch = { BTN("l1") }{ BTN("r1") } platform
 hint-back-to-list = Hold { BTN("menu") } to stop
 
+
+# A cart the frontend will not play, and why. The player can fix both of these, which is the
+# whole reason there are words here and not only the flinch.
+core-missing = No core for this shelf. Put one in System/cores on the card.
+cart-broken = { $title } would not start.

@@ -84,6 +84,11 @@ pub struct App {
     exit: Option<Exit>,
     last_tick: Option<Instant>,
     anim: f32,
+    /// A flinch in progress: the answer to an action that will not happen. Only ever drawn
+    /// when there is no cart on screen to carry the refusal itself.
+    refusal: Option<slot2_ui::refusal::Refusal>,
+    /// What the player is being told, if anything.
+    toast: Option<slot2_ui::toast::Toast>,
 }
 
 impl App {
@@ -131,6 +136,8 @@ impl App {
             exit: None,
             last_tick: None,
             anim: 0.0,
+            refusal: None,
+            toast: None,
         };
         if screen == Screen::List {
             app.rescan();
@@ -150,6 +157,17 @@ impl App {
             Screen::Ejecting => Some(insert::seat_out(self.anim)),
             _ => None,
         }
+    }
+
+    /// How far the screen is knocked off centre this frame, and zero when nothing was
+    /// refused. A flinch is the whole of the answer to an action that cannot happen.
+    pub fn refusal_offset(&self) -> f32 {
+        todo!()
+    }
+
+    /// The message on screen, by its i18n key, and `None` when there is none.
+    pub fn toast_key(&self) -> Option<&str> {
+        todo!()
     }
 
     pub fn shelf_len(&self) -> usize {
