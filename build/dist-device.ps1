@@ -7,8 +7,9 @@
   volume, or a FAT32/exFAT TF2 card):
 
     System\frontend            aarch64 binary, launched by BaseOS's frontend-session
+    System\cores\*.so          the libretro cores, one per shelf
     System\Fonts\*.otf|*.ttf   UI + CJK fonts (the CJK one is loaded lazily on the device)
-    System\licenses\           font licenses (cores join here in M1)
+    System\licenses\           font licences, and each core's .meta stamp
 
   Copy the *contents* of dist-device\ to the card root.
 
