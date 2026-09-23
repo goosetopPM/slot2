@@ -420,3 +420,148 @@ fn a_core_that_is_not_on_the_card_falls_back_instead_of_failing() {
         .expect("a bad core name must fall back, not refuse");
     assert_eq!(s.cart().stem, "arm");
 }
+
+#[test]
+fn rewinding_puts_the_game_back_where_it_was() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("rewind");
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    assert!(
+        s.rewind_enabled(),
+        "rewind should be on unless a game says no"
+    );
+
+    let vol = slot2_audio::Volume::new(100);
+    for _ in 0..60 {
+        s.run_frame(&[], &vol);
+    }
+    let (depth, bytes) = s.rewind_state();
+    let (interval, cost) = s.rewind_pace();
+
+    // How many captures there are depends on how fast this machine is — the interval widens
+    // itself when captures turn out to be expensive, and a debug build is expensive. What
+    // must hold is that captures happened at the interval in force.
+    assert!(depth >= 2, "only {depth} captures in 60 frames");
+    assert!(
+        depth as u32 * interval <= 60 + interval,
+        "{depth} captures at one per {interval} frames is more than 60 frames' worth"
+    );
+
+    // And that the cost stayed inside its share of a frame, which is the promise the
+    // widening exists to keep.
+    let per_frame = cost.div_f64(interval as f64);
+    let allowed = s
+        .frame_time()
+        .mul_f64(slot2::session::REWIND_FRAME_BUDGET * 2.0);
+    assert!(
+        per_frame <= allowed || interval >= slot2::session::MAX_REWIND_INTERVAL,
+        "a capture costs {cost:?} every {interval} frames, over the budget"
+    );
+
+    // Sixty frames of a Game Boy Advance is half a megabyte of state many times over. The
+    // whole point is that it does not cost that.
+    assert!(
+        bytes < 128 * 1024,
+        "{bytes} bytes for {depth} captures — the deltas are not compressing"
+    );
+
+    let before = s.frames_run();
+    let at = s.core_state().expect("a state to compare against");
+
+    for _ in 0..20 {
+        s.run_frame(&[], &vol);
+    }
+    assert_ne!(
+        s.core_state().as_deref(),
+        Some(&at[..]),
+        "twenty frames changed nothing, so this test proves nothing"
+    );
+
+    // Step back far enough to cross the point we recorded.
+    let mut steps = 0;
+    while s.rewind_step() {
+        steps += 1;
+        if steps > 40 {
+            break;
+        }
+    }
+    assert!(steps > 0, "rewind refused to step back at all");
+    assert!(
+        s.frames_run() >= before,
+        "frames_run is a counter, not a clock"
+    );
+
+    // And the ring empties rather than looping forever.
+    assert_eq!(s.rewind_state().0, 0, "the ring should be spent");
+    assert!(!s.rewind_step());
+}
+
+#[test]
+fn turning_rewind_off_frees_the_ring() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("norewind");
+    card.write_settings(
+        &cart,
+        &slot2_store::GameSettings {
+            rewind: Some(false),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    assert!(!s.rewind_enabled());
+    let vol = slot2_audio::Volume::new(100);
+    for _ in 0..60 {
+        s.run_frame(&[], &vol);
+    }
+    assert_eq!(
+        s.rewind_state(),
+        (0, 0),
+        "a game with rewind off kept states"
+    );
+    assert!(!s.rewind_step());
+}
+
+#[test]
+fn fast_forward_runs_more_frames_and_makes_no_sound() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("ff");
+    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let vol = slot2_audio::Volume::new(100);
+
+    for _ in 0..10 {
+        s.run_frame(&[], &vol);
+    }
+    let normal = s.frames_run();
+    let (made_before, _, _, _) = s.audio_health();
+    assert!(made_before > 0, "normal speed should make sound");
+
+    let mut buf = vec![0i16; 8192];
+    while consumer.read(&mut buf) > 0 {}
+
+    s.set_speed(4);
+    assert_eq!(s.speed(), 4);
+    for _ in 0..10 {
+        s.run_frame(&[], &vol);
+    }
+    assert_eq!(
+        s.frames_run() - normal,
+        40,
+        "four core frames per displayed frame"
+    );
+
+    // Silent on purpose: played four times as fast it would be four times the pitch, and
+    // the ring would overflow producing it.
+    let (made_after, dropped, _, _) = s.audio_health();
+    assert_eq!(made_after, made_before, "fast forward pushed audio");
+    assert_eq!(dropped, 0);
+
+    s.set_speed(99);
+    assert_eq!(s.speed(), slot2::session::MAX_SPEED, "speed must be capped");
+    s.set_speed(0);
+    assert_eq!(s.speed(), 1, "zero would stop the game, not slow it");
+}

@@ -16,12 +16,14 @@
 mod ffi;
 mod host;
 pub mod registry;
+pub mod rewind;
 
 pub use host::Core;
 pub use registry::{
     def, joypad_bit, mask_for, options_for, Aspect, Core as CoreId, LogicalButton, Overscan,
     Platform, PlatformDef, PLATFORMS,
 };
+pub use rewind::{Rewind, RewindBudget};
 
 use std::fmt;
 use std::path::PathBuf;

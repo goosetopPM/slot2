@@ -143,7 +143,11 @@ PAR은 플랫폼 상수가 아니다. MD는 256·320 두 폭을 오가면서 둘
 - 로드: `libloading`으로 `.so` 열기, `retro_set_environment` → 콜백 등록.
 - env 콜백 지원 목록(초기): `SET_PIXEL_FORMAT`, `GET_SYSTEM_DIRECTORY`, `GET_SAVE_DIRECTORY`, `GET_VARIABLE`/`SET_VARIABLES`/`GET_VARIABLE_UPDATE`, `GET_CORE_OPTIONS_VERSION`, `SET_CORE_OPTIONS(_V2)`, `SET_GEOMETRY`, `SET_SYSTEM_AV_INFO`, `GET_LOG_INTERFACE`, `SET_INPUT_DESCRIPTORS`, `SET_CONTROLLER_INFO`, `GET_RUMBLE_INTERFACE`, `GET_INPUT_BITMASKS`, `SET_SUPPORT_NO_GAME`(거부), `GET_LANGUAGE`, `SET_FRAME_TIME_CALLBACK`, `GET_AUDIO_VIDEO_ENABLE`. 미지원은 `false` 반환 + 로그.
 - 세이브: `retro_get_memory(SAVE_RAM)` 주기적 flush + 종료 시. 스테이트: `retro_serialize`.
-- 되감기: 직렬화 링버퍼, 플랫폼별 `RewindBudget{interval_frames, ring_bytes}`.
+- 되감기: 직렬화 링버퍼, 플랫폼별 `RewindBudget{interval_frames, ring_bytes}`. 상태를 통째로 쌓는 건 불가능하다 — MD 상태가 1MB이고 6프레임마다 하나면 초당 10MB다. 그런데 0.1초 동안 상태는 거의 변하지 않는다(실측: GBA 528KB 중 61바이트, MD 1MB 중 29바이트, SNES가 가장 심할 때 823KB 중 4KB). 그래서 **온전한 상태 하나 + 그 뒤로 XOR 델타 사슬**로 간다. XOR은 자기 역함수라 한 인코딩이 양방향을 겸하고, 안 바뀐 구간은 varint 두 개로 끝난다.
+  - **캡처 간격은 기기가 정한다.** 캡처 비용(직렬화 + 델타)은 대부분 메모리 트래픽이라 기계와 콘솔에 달렸고, 여기 적어둘 수 있는 값이 아니다. A53(파이 3B+, 기기와 같은 코어)에서 NES는 프레임의 0.5%, MD는 **22%**다. 한 기계의 측정치로 플랫폼별 숫자를 박는 대신, 세션이 **도는 기계에서 직접 재서** 프레임 예산(3%)을 넘으면 간격을 두 배씩 넓힌다(최대 60프레임). 느린 기기에서 되감기가 거칠어질 뿐, 0.1초마다 끊기지는 않는다.
+  - 되감기는 링을 **소비한다**. 1초 되감고 다시 진행하면 되감아 지나온 1초는 남지 않고, 그 자리에 새로 지나가며 찍은 상태가 들어간다.
+- 빨리감기: 한 표시 프레임 안에서 코어를 여러 번 돌린다. 오디오는 버린다 — 4배속으로 재생하면 음정이 4배가 되고 링이 넘친다.
+- 시간 조작 핫키는 **L2(되감기) / R2(빨리감기)**. 여기 플랫폼 중 트리거를 쓰는 기종이 없어 비어 있는 버튼이다.
 - 프레임 콜백: 비디오 → gfx 텍스처, 오디오 → 링버퍼(리샘플), 입력 폴 → input 스냅샷.
 
 **quirks/** — 코어별 모듈. 트레이트 하나:

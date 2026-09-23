@@ -125,6 +125,8 @@ pub struct PlatformDef {
     pub aspect: Aspect,
     /// What to crop by default. Only the NES asks for any.
     pub overscan: Overscan,
+    /// How much of this console's past to keep for rewinding.
+    pub rewind: crate::rewind::RewindBudget,
 }
 
 /// mGBA plays the three Game Boy platforms; the rest have one core each (M2 adds gpSP as a
@@ -139,6 +141,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (160, 144),
         aspect: Aspect::Square,
         overscan: Overscan::NONE,
+        rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
         platform: Platform::Gbc,
@@ -148,6 +151,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (160, 144),
         aspect: Aspect::Square,
         overscan: Overscan::NONE,
+        rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
         platform: Platform::Gba,
@@ -157,6 +161,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (240, 160),
         aspect: Aspect::Square,
         overscan: Overscan::NONE,
+        rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
         platform: Platform::Nes,
@@ -174,6 +179,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (256, 240),
         aspect: Aspect::Pixel { num: 8, den: 7 },
         overscan: Overscan::rows(8),
+        rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
         platform: Platform::Snes,
@@ -183,6 +189,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (256, 224),
         aspect: Aspect::Pixel { num: 8, den: 7 },
         overscan: Overscan::NONE,
+        rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
         platform: Platform::Md,
@@ -192,6 +199,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (320, 224),
         aspect: Aspect::Display { num: 4, den: 3 },
         overscan: Overscan::NONE,
+        rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
         platform: Platform::Sms,
@@ -201,6 +209,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (256, 192),
         aspect: Aspect::Pixel { num: 8, den: 7 },
         overscan: Overscan::NONE,
+        rewind: crate::rewind::RewindBudget::DEFAULT,
     },
 ];
 

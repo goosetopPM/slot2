@@ -56,6 +56,10 @@ pub enum SinkRequest {
     Close,
 }
 
+/// How much faster R2 makes it. Four is the most that is still followable on a handheld
+/// screen, and the A53 can hold it for every core here.
+pub const FAST_FORWARD: u32 = 4;
+
 pub struct App {
     pub screen: Screen,
     pub state: State,
@@ -187,7 +191,24 @@ impl App {
     pub fn run_frame(&mut self) {
         let held = self.held_game_buttons();
         let volume = self.volume;
+        // L2 and R2 are the time controls. No platform here maps them to anything — a Mega
+        // Drive pad has six face buttons and no triggers at all — so they are free, and
+        // holding one is the whole gesture: press to rewind or hurry, let go to play on.
+        let down = self.state.held();
+        let rewinding = down.contains(&Button::L2);
+        let speed = if down.contains(&Button::R2) {
+            FAST_FORWARD
+        } else {
+            1
+        };
         if let Some(s) = self.session.as_mut() {
+            s.set_speed(speed);
+            if rewinding {
+                // While stepping back the core is not run forward, so nothing is fed to the
+                // audio ring; a second of rewind is a second of quiet.
+                s.rewind_step();
+                return;
+            }
             s.run_frame(&held, &volume);
         }
     }
@@ -354,15 +375,20 @@ fn logical(b: Button) -> Option<LogicalButton> {
         Button::Y => LogicalButton::Y,
         Button::L1 => LogicalButton::L1,
         Button::R1 => LogicalButton::R1,
-        Button::L2 => LogicalButton::L2,
-        Button::R2 => LogicalButton::R2,
         Button::Select => LogicalButton::Select,
         Button::Start => LogicalButton::Start,
         Button::Up => LogicalButton::Up,
         Button::Down => LogicalButton::Down,
         Button::Left => LogicalButton::Left,
         Button::Right => LogicalButton::Right,
-        Button::Menu | Button::Power | Button::VolUp | Button::VolDown => return None,
+        // L2 and R2 drive rewind and fast forward, so they never reach the core. Nothing
+        // this frontend emulates has a second pair of shoulder buttons to lose.
+        Button::L2
+        | Button::R2
+        | Button::Menu
+        | Button::Power
+        | Button::VolUp
+        | Button::VolDown => return None,
     })
 }
 #[cfg(test)]

@@ -161,6 +161,15 @@ pub fn run(boot: Boot) {
             if began.duration_since(last_audio_report) >= Duration::from_secs(5) {
                 last_audio_report = began;
                 eprintln!("slot2: audio: {made} frames, {dropped} dropped, ring {queued}/{cap}");
+                if let Some(s) = app.session() {
+                    let (depth, bytes) = s.rewind_state();
+                    let (interval, cost) = s.rewind_pace();
+                    eprintln!(
+                        "slot2: rewind: {depth} captures in {} KiB, one per {interval} frames, worst {:.1} ms",
+                        bytes / 1024,
+                        cost.as_secs_f64() * 1000.0
+                    );
+                }
             }
         }
 

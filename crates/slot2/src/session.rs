@@ -82,6 +82,18 @@ fn frame_time_for(fps: f64) -> Duration {
     Duration::from_secs_f64(1.0 / fps)
 }
 
+/// The share of a frame rewind may spend taking states before it starts taking them less
+/// often. Three percent is under the noise of everything else in a frame.
+pub const REWIND_FRAME_BUDGET: f64 = 0.03;
+
+/// However slow the machine, a capture at least this often — past a second of granularity
+/// rewind stops being rewind.
+pub const MAX_REWIND_INTERVAL: u32 = 60;
+
+/// The fastest fast forward on offer. Past this the core is the bottleneck anyway and the
+/// picture is unreadable.
+pub const MAX_SPEED: u32 = 8;
+
 /// The resume thumbnail fits inside this box.
 pub const THUMB_MAX: u32 = 160;
 
@@ -118,6 +130,11 @@ pub struct Session {
     cart: Cart,
     core: Core,
     retro_platform: slot2_retro::Platform,
+    rewind: slot2_retro::Rewind,
+    rewind_on: bool,
+    /// The worst capture seen so far, which is what the interval is budgeted against.
+    rewind_cost: std::time::Duration,
+    speed: u32,
     aspect: slot2_retro::Aspect,
     overscan: slot2_retro::Overscan,
     scale: slot2_gfx::ScalePolicy,
@@ -218,6 +235,10 @@ impl Session {
             cart: cart.clone(),
             core,
             retro_platform,
+            rewind: slot2_retro::Rewind::new(def.rewind),
+            rewind_on: settings.rewind.unwrap_or(true),
+            rewind_cost: std::time::Duration::ZERO,
+            speed: 1,
             aspect: def.aspect,
             overscan: if settings.overscan.unwrap_or(true) {
                 def.overscan
@@ -289,6 +310,14 @@ impl Session {
             0,
             slot2_retro::mask_for(retro_platform, held.iter().copied()),
         );
+        // Fast forward is extra core frames inside one displayed frame. Only the last one's
+        // picture is shown and none of their audio is kept: a stream played at three times
+        // the rate is three times the pitch, and the ring would overflow producing it.
+        for _ in 1..self.speed.max(1) {
+            self.core.run();
+            let _ = self.core.take_audio();
+            self.frames_run += 1;
+        }
         self.core.run();
 
         // A core may retime itself mid-game (`SET_SYSTEM_AV_INFO`); reading this back is a
@@ -308,11 +337,13 @@ impl Session {
 
         let samples = self.core.take_audio();
         self.scratch_audio.clear();
-        self.resampler.process(&samples, &mut self.scratch_audio);
-        volume.apply(&mut self.scratch_audio);
-        let took = self.producer.write(&self.scratch_audio);
-        self.audio_frames += (self.scratch_audio.len() / CHANNELS) as u64;
-        self.audio_dropped += ((self.scratch_audio.len() - took) / CHANNELS) as u64;
+        if self.speed <= 1 {
+            self.resampler.process(&samples, &mut self.scratch_audio);
+            volume.apply(&mut self.scratch_audio);
+            let took = self.producer.write(&self.scratch_audio);
+            self.audio_frames += (self.scratch_audio.len() / CHANNELS) as u64;
+            self.audio_dropped += ((self.scratch_audio.len() - took) / CHANNELS) as u64;
+        }
 
         if let Some(frame) = self.core.frame() {
             if frame.width != self.last_width || frame.height != self.last_height {
@@ -325,6 +356,105 @@ impl Session {
         }
 
         self.frames_run += 1;
+
+        if self.rewind_on && self.rewind.should_capture(self.frames_run) {
+            let began = std::time::Instant::now();
+            match self.core.serialize() {
+                Ok(state) => self.rewind.push(state),
+                Err(e) => {
+                    eprintln!("slot2: rewind off, this core cannot serialize: {e}");
+                    self.rewind_on = false;
+                    self.rewind.clear();
+                }
+            }
+            self.budget_rewind(began.elapsed());
+        }
+    }
+
+    /// Keep the cost of rewinding under [`REWIND_FRAME_BUDGET`] by taking states less often.
+    ///
+    /// A capture is a `retro_serialize` and a delta against the last one, and both are
+    /// mostly memory traffic — so what it costs depends on the machine and the console, not
+    /// on anything that can be written down here. Measured on a Cortex-A53, the same core
+    /// as the device: a NES state costs half a percent of a frame, a Mega Drive state
+    /// twenty-two percent. Rather than pick a number per platform from one machine's
+    /// timings, this measures what it actually costs where it actually runs and doubles the
+    /// interval until it fits.
+    ///
+    /// The worst that can happen is coarser rewind on a slow box, which is what anyone
+    /// would choose over a stutter every tenth of a second.
+    fn budget_rewind(&mut self, took: std::time::Duration) {
+        self.rewind_cost = self.rewind_cost.max(took);
+        let interval = self.rewind.interval();
+        if interval == 0 || interval >= MAX_REWIND_INTERVAL {
+            return;
+        }
+        let per_frame = self.rewind_cost.div_f64(interval as f64);
+        if per_frame <= self.frame_time.mul_f64(REWIND_FRAME_BUDGET) {
+            return;
+        }
+        let wider = (interval * 2).min(MAX_REWIND_INTERVAL);
+        self.rewind.set_interval(wider);
+        eprintln!(
+            "slot2: rewind capture takes {:.1} ms; taking one every {wider} frames instead of {interval}",
+            self.rewind_cost.as_secs_f64() * 1000.0
+        );
+    }
+
+    /// Step the game back one rewind capture. False when there is nothing behind it.
+    ///
+    /// The ring is spent as it is walked, so holding rewind runs out rather than looping,
+    /// and playing forward from wherever it stopped fills it again.
+    pub fn rewind_step(&mut self) -> bool {
+        let Some(state) = self.rewind.pop() else {
+            return false;
+        };
+        if let Err(e) = self.core.unserialize(state) {
+            eprintln!("slot2: rewind failed: {e}");
+            self.rewind.clear();
+            return false;
+        }
+        // The picture has to follow the state back, or the screen keeps showing where the
+        // player was until the next frame runs.
+        if let Some(frame) = self.core.frame() {
+            self.last_width = frame.width;
+            self.last_height = frame.height;
+            self.video_buffer = frame.to_rgba8();
+            self.video_dirty = true;
+        }
+        true
+    }
+
+    /// How many captures are still behind the current moment, and what they cost.
+    pub fn rewind_state(&self) -> (usize, usize) {
+        (self.rewind.depth(), self.rewind.bytes())
+    }
+
+    /// `(frames between captures, the worst capture seen)`. The interval widens itself on a
+    /// machine where captures are expensive; this is how the log says so.
+    pub fn rewind_pace(&self) -> (u32, std::time::Duration) {
+        (self.rewind.interval(), self.rewind_cost)
+    }
+
+    pub fn rewind_enabled(&self) -> bool {
+        self.rewind_on
+    }
+
+    /// Turning rewind off frees the ring; turning it on starts a new one from here.
+    pub fn set_rewind(&mut self, on: bool) {
+        if self.rewind_on != on {
+            self.rewind.clear();
+        }
+        self.rewind_on = on;
+    }
+
+    /// Core frames per displayed frame. 1 is normal speed; anything more is silent.
+    pub fn speed(&self) -> u32 {
+        self.speed
+    }
+
+    pub fn set_speed(&mut self, times: u32) {
+        self.speed = times.clamp(1, MAX_SPEED);
     }
 
     /// Upload the newest picture if there is one. Call before `draw`.
@@ -476,6 +606,12 @@ impl Session {
     }
 
     /// How many frames have run since `start`.
+    /// The core's state right now, for tests and for anything that wants to compare two
+    /// moments. `None` when the core refuses to serialize.
+    pub fn core_state(&mut self) -> Option<Vec<u8>> {
+        self.core.serialize().ok()
+    }
+
     pub fn frames_run(&self) -> u64 {
         self.frames_run
     }

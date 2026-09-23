@@ -55,12 +55,16 @@ pub struct GameSettings {
     pub scale: Option<ScaleMode>,
     /// Whether to crop the platform's overscan. Only the NES has any to crop.
     pub overscan: Option<bool>,
+    /// Whether to keep a rewind ring. It costs a save state every tenth of a second and up
+    /// to the platform's byte budget, which a slow core or a tight game may not want.
+    pub rewind: Option<bool>,
 }
 
 impl GameSettings {
     pub const KEY_CORE: &'static str = "core";
     pub const KEY_SCALE: &'static str = "scale";
     pub const KEY_OVERSCAN: &'static str = "overscan";
+    pub const KEY_REWIND: &'static str = "rewind";
 
     /// True when nothing is set, which is when the file should not exist.
     pub fn is_default(&self) -> bool {
@@ -76,6 +80,7 @@ impl GameSettings {
                 .map(str::to_string),
             scale: ini.get(Self::KEY_SCALE).and_then(ScaleMode::parse),
             overscan: ini.get(Self::KEY_OVERSCAN).and_then(parse_bool),
+            rewind: ini.get(Self::KEY_REWIND).and_then(parse_bool),
         }
     }
 
@@ -98,6 +103,12 @@ impl GameSettings {
             Some(b) => ini.set(Self::KEY_OVERSCAN, if b { "on" } else { "off" }),
             None => {
                 ini.remove(Self::KEY_OVERSCAN);
+            }
+        }
+        match self.rewind {
+            Some(b) => ini.set(Self::KEY_REWIND, if b { "on" } else { "off" }),
+            None => {
+                ini.remove(Self::KEY_REWIND);
             }
         }
     }

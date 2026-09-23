@@ -278,6 +278,7 @@ fn settings_round_trip_and_land_where_the_design_says() {
         core: Some("mgba_libretro".into()),
         scale: Some(ScaleMode::AspectFit),
         overscan: Some(false),
+        rewind: Some(false),
     };
     card.write_settings(&cart, &want).unwrap();
 
