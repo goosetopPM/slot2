@@ -26,7 +26,10 @@ fn card(per_platform: &[Platform], default: bool, size: (u32, u32)) -> (Card, Pa
     let card = Card::new(&root);
     card.ensure_layout();
     for p in per_platform {
-        write_png(&root.join("Wallpapers").join(format!("{}.png", p.folder())), size);
+        write_png(
+            &root.join("Wallpapers").join(format!("{}.png", p.folder())),
+            size,
+        );
     }
     if default {
         write_png(&root.join("Wallpapers/default.png"), size);
@@ -47,13 +50,22 @@ fn write_png(path: &std::path::Path, (w, h): (u32, u32)) {
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header()
         .unwrap()
-        .write_image_data(&(0..w * h).flat_map(|_| [0xFF, 0x00, 0xFF, 0xFF]).collect::<Vec<u8>>())
+        .write_image_data(
+            &(0..w * h)
+                .flat_map(|_| [0xFF, 0x00, 0xFF, 0xFF])
+                .collect::<Vec<u8>>(),
+        )
         .unwrap();
 }
 
 /// The area every op covers, as (left, top, right, bottom).
 fn extent(canvas: &RecordingCanvas) -> (f32, f32, f32, f32) {
-    let mut e = (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let mut e = (
+        f32::INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+    );
     for op in canvas.frame() {
         let (x, y, w, h) = match op {
             Op::Rect { x, y, w, h, .. } | Op::Image { x, y, w, h, .. } => (*x, *y, *w, *h),
@@ -129,7 +141,10 @@ fn the_ground_does_not_re_upload_every_frame() {
         .skip(warm)
         .filter(|o| matches!(o, Op::UploadRgba8 { .. } | Op::UploadAlpha8 { .. }))
         .count();
-    assert_eq!(uploads, 0, "two seconds of background uploaded {uploads} times");
+    assert_eq!(
+        uploads, 0,
+        "two seconds of background uploaded {uploads} times"
+    );
 }
 
 // ------------------------------------------------------------------ the card's
@@ -148,11 +163,11 @@ fn a_card_picture_is_used_and_still_covers_the_panel() {
             let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
             w.draw(&mut canvas, &safe);
 
-            let drew_image = canvas
-                .frame()
-                .iter()
-                .any(|o| matches!(o, Op::Image { .. }));
-            assert!(drew_image, "{g:?} {size:?}: the card's picture was not drawn");
+            let drew_image = canvas.frame().iter().any(|o| matches!(o, Op::Image { .. }));
+            assert!(
+                drew_image,
+                "{g:?} {size:?}: the card's picture was not drawn"
+            );
 
             let (l, t, r, b) = extent(&canvas);
             assert!(
@@ -241,7 +256,10 @@ fn switching_back_to_a_shelf_does_not_decode_again() {
         .skip(after_first)
         .filter(|o| matches!(o, Op::UploadRgba8 { .. }))
         .count();
-    assert_eq!(uploads, 0, "the same wallpaper was uploaded {uploads} more times");
+    assert_eq!(
+        uploads, 0,
+        "the same wallpaper was uploaded {uploads} more times"
+    );
 }
 
 #[test]
@@ -289,10 +307,7 @@ fn dropping_the_card_picture_goes_back_to_the_ground() {
     w.set_source(card.wallpaper(Platform::Gba));
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     w.draw(&mut canvas, &safe);
-    assert!(canvas
-        .frame()
-        .iter()
-        .any(|o| matches!(o, Op::Image { .. })));
+    assert!(canvas.frame().iter().any(|o| matches!(o, Op::Image { .. })));
 
     w.set_source(None);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
@@ -342,12 +357,21 @@ fn a_huge_picture_is_not_uploaded_at_source_resolution() {
 
 #[test]
 fn cover_uv_never_leaves_a_gap_and_never_inverts() {
-    for src in [(1u32, 1u32), (320, 240), (1920, 1080), (200, 900), (1024, 1024)] {
+    for src in [
+        (1u32, 1u32),
+        (320, 240),
+        (1920, 1080),
+        (200, 900),
+        (1024, 1024),
+    ] {
         for dest in [(640u32, 480u32), (720, 480), (720, 720)] {
             let [u0, v0, u1, v1] = cover_uv(src, dest);
             for v in [u0, v0, u1, v1] {
                 assert!(v.is_finite(), "{src:?}->{dest:?}: {u0},{v0},{u1},{v1}");
-                assert!((0.0..=1.0).contains(&v), "{src:?}->{dest:?}: {v} is off the texture");
+                assert!(
+                    (0.0..=1.0).contains(&v),
+                    "{src:?}->{dest:?}: {v} is off the texture"
+                );
             }
             assert!(u1 > u0 && v1 > v0, "{src:?}->{dest:?}: inverted");
 

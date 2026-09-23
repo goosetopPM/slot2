@@ -157,7 +157,15 @@ impl Card {
     /// looks like one is M3's acceptance criterion. A card that wants one picture for
     /// everything names it `default` and stops there.
     pub fn wallpaper(&self, p: Platform) -> Option<PathBuf> {
-        todo!()
+        let p = self
+            .root
+            .join("Wallpapers")
+            .join(format!("{}.png", p.folder()));
+        if p.is_file() {
+            return Some(p);
+        }
+        let default = self.root.join("Wallpapers").join("default.png");
+        default.is_file().then_some(default)
     }
 
     /// `Labels/<PLAT>/<stem>.png` if it exists.

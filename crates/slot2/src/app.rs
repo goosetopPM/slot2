@@ -209,13 +209,15 @@ impl App {
     }
 
     pub fn rescan(&mut self) {
-        self.carts = self.card.scan(self.platform());
+        let platform = self.platform();
+        self.carts = self.card.scan(platform);
         // The card names a cart by its file; the shelf shows a game. `(USA) (Rev 1)` is a
         // fact about the dump, and it is cleaned off here, once, rather than in the draw
         // loop where it would be rebuilt for every cart on screen sixty times a second.
         for cart in &mut self.carts {
             cart.title = slot2_ui::label::clean_title(&cart.stem);
         }
+        self.wallpaper.set_source(self.card.wallpaper(platform));
         self.shelf_view.shelf.set_len(self.carts.len());
         let labels = self.carts.iter().map(|c| self.card.label(c)).collect();
         self.shelf_view.set_labels(labels);
@@ -279,11 +281,10 @@ impl App {
                 if self.anim < insert::SEATED_AT {
                     return;
                 }
-                self.start_selected();
+                if self.anim < insert::SEATED_AT + 0.02 {
+                    self.start_selected();
+                }
                 if self.session.is_none() {
-                    // No core for this cart — an ordinary state for a half-built card. The
-                    // cart comes back out from where it got to, which is the slot, rather
-                    // than sitting on the seated frame for ever.
                     self.screen = Screen::Ejecting;
                     self.anim = 0.0;
                 }
@@ -486,6 +487,9 @@ impl App {
 
     pub fn draw(&mut self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, now: Instant) {
         canvas.set_origin(self.refusal_offset(), 0.0);
+        if self.screen != Screen::Playing {
+            self.wallpaper.draw(canvas, &ctx.safe);
+        }
         match self.screen {
             Screen::Splash => self.splash.draw(canvas, ctx),
             Screen::List => {

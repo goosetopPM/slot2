@@ -156,6 +156,32 @@ pub fn fit_rect(panel: (u32, u32), drawable: (u32, u32)) -> Rect {
     }
 }
 
+/// The part of `src` to show so that it *covers* `dest` without distortion.
+///
+/// Cover rather than fit, because a background is the ground the screen stands on and a
+/// letterboxed one is a picture in a frame. The panel comes in three shapes — 4:3, 3:2 and
+/// square — so no single image can match all of them, and something has to give: either the
+/// aspect (which stretches faces), the coverage (which leaves bars), or the edges. The edges
+/// of a background are the part nobody composed.
+///
+/// Returns `[u0, v0, u1, v1]`, centred on the image.
+pub fn cover_uv(src: (u32, u32), dest: (u32, u32)) -> [f32; 4] {
+    if src.0 == 0 || src.1 == 0 || dest.0 == 0 || dest.1 == 0 {
+        return [0.0, 0.0, 1.0, 1.0];
+    }
+    let want = dest.0 as f32 / dest.1 as f32;
+    let have = src.0 as f32 / src.1 as f32;
+    if have > want {
+        let crop_w = src.1 as f32 * want;
+        let u_margin = (src.0 as f32 - crop_w) / 2.0 / src.0 as f32;
+        [u_margin, 0.0, 1.0 - u_margin, 1.0]
+    } else {
+        let crop_h = src.0 as f32 / want;
+        let v_margin = (src.1 as f32 - crop_h) / 2.0 / src.1 as f32;
+        [0.0, v_margin, 1.0, 1.0 - v_margin]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,17 +363,4 @@ mod tests {
         assert_eq!(sub_uv((256, 240), 200, 0, 200, 0), [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(sub_uv((0, 0), 1, 1, 1, 1), [0.0, 0.0, 1.0, 1.0]);
     }
-}
-
-/// The part of `src` to show so that it *covers* `dest` without distortion.
-///
-/// Cover rather than fit, because a background is the ground the screen stands on and a
-/// letterboxed one is a picture in a frame. The panel comes in three shapes — 4:3, 3:2 and
-/// square — so no single image can match all of them, and something has to give: either the
-/// aspect (which stretches faces), the coverage (which leaves bars), or the edges. The edges
-/// of a background are the part nobody composed.
-///
-/// Returns `[u0, v0, u1, v1]`, centred on the image.
-pub fn cover_uv(src: (u32, u32), dest: (u32, u32)) -> [f32; 4] {
-    todo!()
 }

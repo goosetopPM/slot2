@@ -109,10 +109,16 @@ fn every_shelf_screen_paints_the_whole_panel() {
         "an insert left the panel bare"
     );
 
+    // Stop on the frame the refusal happens. The whole insert-and-eject is 0.9s, so a
+    // fixed run long enough to be sure of reaching the eject is also long enough to be past
+    // it, and the test would be asserting on the shelf again.
     let mut now = t + Duration::from_millis(60);
-    for _ in 0..60 {
+    for _ in 0..120 {
         now += Duration::from_micros(16_667);
         a.tick(now);
+        if a.screen == Screen::Ejecting {
+            break;
+        }
     }
     assert_eq!(a.screen, Screen::Ejecting, "expected the refused eject");
     let c = frame(&mut a, now);
@@ -128,10 +134,18 @@ fn the_ground_goes_down_before_anything_stands_on_it() {
     let (mut a, _root) = app(&[]);
     let t = Instant::now();
     let c = frame(&mut a, t);
+    // The first thing *drawn*, not the first op: a texture upload is not a mark on the
+    // screen, and the ground's own gradient is uploaded before it is drawn. The first
+    // version of this test looked at op zero, which let a redundant full-panel rect in
+    // ahead of the real background and hid that it was asking the wrong question.
+    let first = c
+        .frame()
+        .iter()
+        .find(|o| matches!(o, Op::Rect { .. } | Op::Image { .. }))
+        .expect("the shelf drew nothing at all");
     assert!(
-        covers_panel(&c.frame()[0], PANEL),
-        "the first thing drawn was not the ground: {:?}",
-        c.frame().first()
+        covers_panel(first, PANEL),
+        "the first thing drawn was not the ground: {first:?}"
     );
 }
 
@@ -142,12 +156,17 @@ fn switching_shelf_changes_the_ground() {
     let t = Instant::now();
     assert_eq!(a.platform(), Platform::Gba);
 
-    let first = frame(&mut a, t);
-    let gba_tex = first.frame().iter().find_map(|o| match o {
-        Op::Image { tex, .. } if covers_panel(o, PANEL) => Some(*tex),
-        _ => None,
-    });
-    assert!(gba_tex.is_some(), "the GBA shelf drew no background picture");
+    // Both shelves are drawn into *one* canvas and the frame is split at an index. Texture
+    // ids are handed out per canvas and start again at 1 for each, so comparing ids across
+    // two canvases compares nothing — an earlier version of this test did exactly that, and
+    // what came back was an implementation that uploaded junk 1x1 textures to push the
+    // numbering apart until the ids differed.
+    let safe = slot2_ui::layout::SafeArea::for_geometry(slot2_platform::Geometry::W720H480);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut ctx = ui();
+
+    a.draw(&mut canvas, &mut ctx, t);
+    let split = canvas.ops.len();
 
     // Walk to the Game Boy shelf.
     let mut now = t;
@@ -159,17 +178,22 @@ fn switching_shelf_changes_the_ground() {
         now += Duration::from_millis(100);
     }
     assert_eq!(a.platform(), Platform::Gb, "never reached the GB shelf");
+    a.draw(&mut canvas, &mut ctx, now);
 
-    let second = frame(&mut a, now);
-    let gb_tex = second.frame().iter().find_map(|o| match o {
-        Op::Image { tex, .. } if covers_panel(o, PANEL) => Some(*tex),
-        _ => None,
-    });
-    assert!(gb_tex.is_some(), "the GB shelf drew no background picture");
-    assert_ne!(
-        gba_tex, gb_tex,
-        "both shelves stand on the same picture"
+    let ground = |ops: &[Op]| -> Option<slot2_gfx::TexId> {
+        ops.iter().find_map(|o| match o {
+            Op::Image { tex, .. } if covers_panel(o, PANEL) => Some(*tex),
+            _ => None,
+        })
+    };
+    let gba_tex = ground(&canvas.ops[..split]);
+    let gb_tex = ground(&canvas.ops[split..]);
+    assert!(
+        gba_tex.is_some(),
+        "the GBA shelf drew no background picture"
     );
+    assert!(gb_tex.is_some(), "the GB shelf drew no background picture");
+    assert_ne!(gba_tex, gb_tex, "both shelves stand on the same picture");
 }
 
 #[test]
