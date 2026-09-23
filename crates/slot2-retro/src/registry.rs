@@ -109,6 +109,53 @@ impl Overscan {
     }
 }
 
+/// What the machine running a core can afford, and how much screen it has to show it on.
+///
+/// The distinction this draws is the point of it. A console's own facts — how wide its
+/// pixels are, which buttons exist — belong to [`PlatformDef`] and are the same everywhere.
+/// What sound quality is worth paying for, or whether a hi-res SNES screen is worth
+/// emulating, is a property of the device, and SLOT2 runs on ten of them across three panel
+/// sizes. Folding the two together is how a frontend ends up with a 720x720 machine
+/// configured like a 640x480 one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tuning {
+    /// The panel, in pixels. A bigger one earns a core the right to draw more.
+    pub geometry: (u32, u32),
+    /// Whether the machine has cycles to spare. Every target SLOT2 ships for today is an
+    /// Allwinner H700, so this is false everywhere; the field exists because the next one
+    /// may not be, and because the host build has no such excuse.
+    pub fast_cpu: bool,
+}
+
+impl Tuning {
+    /// What a handheld gets: the panel it has, and no cycles to spare.
+    pub const fn handheld(geometry: (u32, u32)) -> Tuning {
+        Tuning {
+            geometry,
+            fast_cpu: false,
+        }
+    }
+
+    /// The PC the host build runs on, which can afford anything.
+    pub const DESKTOP: Tuning = Tuning {
+        geometry: (720, 480),
+        fast_cpu: true,
+    };
+
+    /// Whether a Super Game Boy border is worth what it costs on this panel.
+    ///
+    /// A border does not frame the picture, it *replaces* it: the core stops emitting
+    /// 160x144 and starts emitting 256x224 with the game in the middle. Integer scaling
+    /// then applies to the whole thing, so the game itself drops a step — on 640x480 from
+    /// 4x to 2x, on 720x720 from 4x to 2x. That is a bad trade on anything handheld-sized
+    /// and a fine one on a television, so the test is whether the bordered picture still
+    /// lands at 3x or better.
+    pub fn room_for_a_border(self) -> bool {
+        let (w, h) = self.geometry;
+        (w / 256).min(h / 224) >= 3
+    }
+}
+
 /// One platform's entry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformDef {
@@ -213,16 +260,26 @@ pub const PLATFORMS: &[PlatformDef] = &[
     },
 ];
 
-/// The options to launch this platform with, given whether one of its BIOS files was found
-/// on the card.
+/// The options to launch this platform with.
 ///
-/// A BIOS is optional for every platform here — the cores all emulate one well enough to
-/// play without — so the question is not whether the game runs but whether the player sees
-/// the real boot sequence. Someone who went to the trouble of putting `gb_bios.bin` on the
-/// card wants the Game Boy logo to scroll down; someone who did not should not sit through
-/// a core's imitation of it. So the presence of the file *is* the setting, and there is
-/// nothing to configure until a player wants to disagree with it.
-pub fn options_for(platform: Platform, bios_present: bool) -> Vec<(String, String)> {
+/// Three sources, in order: what the console needs whatever it runs on (`PlatformDef`),
+/// what this device can afford (`Tuning`), and whether a BIOS is on the card. A per-game
+/// `.ini` overrides the lot, later, in `Session`.
+///
+/// The values here started as the ones the author had settled on in spruceOS for an RG SP
+/// after using it, which is better evidence than defaults nobody chose. They are *not*
+/// copied wholesale: spruce configures one device, and anything in that set that was really
+/// a decision about a 720x480 screen or an H700's cycles is expressed through `Tuning`
+/// instead of written down as though it were true of every console everywhere.
+///
+/// Deliberately absent: every core's own aspect-ratio and overscan option. This frontend
+/// decides both itself, from `PlatformDef::aspect` and `PlatformDef::overscan`, so letting
+/// a core also correct them would apply the correction twice.
+pub fn options_for(
+    platform: Platform,
+    bios_present: bool,
+    tuning: Tuning,
+) -> Vec<(String, String)> {
     let def = def(platform);
     let mut out: Vec<(String, String)> = def
         .options
@@ -232,20 +289,75 @@ pub fn options_for(platform: Platform, bios_present: bool) -> Vec<(String, Strin
 
     let mut set = |k: &str, v: &str| out.push((k.to_string(), v.to_string()));
     match def.default_core {
-        // mGBA looks for a BIOS on its own (`mgba_use_bios` is ON by default) and falls
-        // back to its own high-level boot when there is none. Skipping the intro is about
-        // the intro, not about the BIOS.
         Core::Mgba | Core::Gpsp => {
+            // mGBA looks for a BIOS on its own (`mgba_use_bios` is ON by default) and falls
+            // back to its own high-level boot when there is none. Skipping the intro is
+            // about the intro, not about the BIOS.
             set("mgba_skip_bios", if bios_present { "OFF" } else { "ON" });
+
+            // Skipping the busy-wait loops a game spends most of its time in. Free accuracy
+            // for anything that is not a cycle-exact test ROM, and worth having on any
+            // machine, so it is not conditional.
+            set("mgba_idle_optimization", "Remove Known");
+            set("mgba_interframe_blending", "OFF");
+
+            // A Super Game Boy border turns a 160x144 picture into a 256x224 one. That is a
+            // fair trade on a tall panel with room to spare and a bad one on a 640x480,
+            // where the game itself loses a whole integer step of scale to make room.
+            set(
+                "mgba_sgb_borders",
+                if tuning.room_for_a_border() {
+                    "ON"
+                } else {
+                    "OFF"
+                },
+            );
+
+            // Colour correction turns a GBA's washed-out panel into what the hardware
+            // actually looked like. On a backlit IPS screen the original wash is the
+            // artefact, not the effect — off, as on the author's own device.
+            set("mgba_color_correction", "OFF");
+
+            // Holding left and right at once is a thing no d-pad can do and several games
+            // crash on.
+            set("mgba_allow_opposing_directions", "no");
         }
-        // Genesis Plus GX will not touch a boot ROM unless told to, and says so plainly.
+        Core::Fceumm => {
+            // A NES makes very little sound and high-quality resampling of it is not where
+            // an H700's cycles should go. A machine with cycles to spare can have it.
+            set(
+                "fceumm_sndquality",
+                if tuning.fast_cpu { "High" } else { "Low" },
+            );
+            set("fceumm_up_down_allowed", "disabled");
+            // Sprite flicker is what the hardware did, and several games rely on it to hide
+            // things they drew off the side.
+            set("fceumm_nospritelimit", "disabled");
+        }
+        Core::Snes9x => {
+            // Hi-res doubles what the SNES draws in both directions. It fits on every panel
+            // here — 512x448 lands at 1x on all three — so this is a question about cycles,
+            // not about the screen, and an H700 would rather not.
+            set(
+                "snes9x_gfx_hires",
+                if tuning.fast_cpu {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+            );
+            set("snes9x_up_down_allowed", "disabled");
+        }
         Core::GenesisPlusGx => {
+            // Genesis Plus GX will not touch a boot ROM unless it is told to.
             set(
                 "genesis_plus_gx_bios",
                 if bios_present { "enabled" } else { "disabled" },
             );
+            // The 68000 stalling on a bus error is accurate and breaks a handful of games
+            // that were shipped relying on it not happening.
+            set("genesis_plus_gx_force_dtack", "enabled");
         }
-        Core::Fceumm | Core::Snes9x => {}
     }
     out
 }

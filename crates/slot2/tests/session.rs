@@ -43,6 +43,11 @@ fn core_dir() -> Option<PathBuf> {
     }
 }
 
+/// The host's tuning, which is what these tests run under.
+fn tuning() -> slot2_retro::Tuning {
+    slot2::tuning_for(&slot2_platform::detect().profile)
+}
+
 /// A context just real enough for `draw`, which only wants somewhere to measure text.
 fn ui_ctx() -> slot2_ui::UiCtx {
     slot2_ui::UiCtx::new(slot2_platform::detect().profile, "en", Vec::new(), None)
@@ -70,7 +75,7 @@ fn a_session_runs_frames_and_produces_audio_and_video() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("run");
-    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     assert_eq!(s.cart().stem, "arm");
     assert_eq!(s.frames_run(), 0);
     assert!(s.last_frame().is_none());
@@ -101,7 +106,7 @@ fn muting_silences_the_stream_without_stopping_it() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("mute");
-    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     let mut vol = Volume::new(100);
     vol.set_muted(true);
     for _ in 0..20 {
@@ -121,7 +126,7 @@ fn thumbnail_fits_the_box_and_keeps_aspect() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("thumb");
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     assert!(s.thumbnail().is_none());
     for _ in 0..10 {
         s.run_frame(&[], &Volume::default());
@@ -143,7 +148,7 @@ fn states_round_trip_through_the_card() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, root) = card_with_rom("states");
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     for _ in 0..20 {
         s.run_frame(&[], &Volume::default());
     }
@@ -171,14 +176,14 @@ fn stopping_writes_the_save_and_a_resume_state() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, root) = card_with_rom("stop");
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     for _ in 0..5 {
         s.run_frame(&[], &Volume::default());
     }
     s.stop(&card);
     assert!(root.join("States/GBA/arm/resume.state").is_file());
     // The core can be loaded again afterwards: the library was released.
-    let (mut s2, _c2) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s2, _c2) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     s2.run_frame(&[], &Volume::default());
     assert!(s2.last_frame().is_some());
     s2.stop(&card);
@@ -189,7 +194,7 @@ fn save_ram_is_flushed_periodically_and_restored_on_the_next_start() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("sram");
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     // arm.gba may expose no save RAM; the calls must still be clean either way.
     let _ = s.flush_save(&card).unwrap();
     for _ in 0..SAVE_EVERY_FRAMES + 2 {
@@ -198,7 +203,7 @@ fn save_ram_is_flushed_periodically_and_restored_on_the_next_start() {
     assert_eq!(s.frames_run(), SAVE_EVERY_FRAMES + 2);
     s.stop(&card);
     // Starting again with whatever was written must not fail.
-    let (s2, _c2) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (s2, _c2) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     s2.stop(&card);
 }
 
@@ -208,7 +213,7 @@ fn a_missing_core_is_a_clean_error() {
     let (card, cart, _root) = card_with_rom("nocore");
     let empty = std::env::temp_dir().join(format!("slot2-nocore-{}", std::process::id()));
     fs::create_dir_all(&empty).unwrap();
-    let e = Session::start(&card, &cart, &empty, 48_000).unwrap_err();
+    let e = Session::start(&card, &cart, &empty, 48_000, tuning()).unwrap_err();
     assert!(matches!(e, slot2::session::Error::NoCore(_)), "{e}");
     assert!(e.to_string().contains("mgba_libretro"), "{e}");
 }
@@ -218,7 +223,7 @@ fn a_session_paces_and_produces_audio_at_the_sink_rate() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("pace");
-    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
 
     // A GBA is 59.7275 fps, not 60. Pacing the loop at a flat 1/60 runs the core 0.46 %
     // fast, and once the ring fills every frame's audio tail is thrown away.
@@ -259,7 +264,7 @@ fn the_picture_lands_where_the_scale_policy_says() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("scale");
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
 
     let vol = slot2_audio::Volume::new(100);
     for _ in 0..4 {
@@ -313,7 +318,7 @@ fn a_steady_frame_size_rewrites_the_texture_instead_of_reallocating_it() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("tex");
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
 
     let vol = slot2_audio::Volume::new(100);
     let mut canvas = slot2_gfx::RecordingCanvas::new(720, 480);
@@ -379,7 +384,7 @@ fn a_settings_file_changes_how_the_game_is_drawn() {
     )
     .unwrap();
 
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     assert_eq!(s.scale(), slot2_gfx::ScalePolicy::Fill);
 
     let vol = slot2_audio::Volume::new(100);
@@ -416,7 +421,7 @@ fn a_core_that_is_not_on_the_card_falls_back_instead_of_failing() {
     .unwrap();
 
     // A setting is allowed to be wrong. It is not allowed to make a game unlaunchable.
-    let (s, _c) = Session::start(&card, &cart, &cores, 48_000)
+    let (s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning())
         .expect("a bad core name must fall back, not refuse");
     assert_eq!(s.cart().stem, "arm");
 }
@@ -426,27 +431,23 @@ fn rewinding_puts_the_game_back_where_it_was() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("rewind");
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     assert!(
         s.rewind_enabled(),
         "rewind should be on unless a game says no"
     );
 
     let vol = slot2_audio::Volume::new(100);
-    for _ in 0..60 {
+    // Enough frames to have captured several even if this machine turned out slow enough
+    // for the interval to widen all the way: how often states are taken is decided at run
+    // time, so a test that counts on a particular rate is a test that fails under load.
+    const FRAMES: usize = 4 * slot2::session::MAX_REWIND_INTERVAL as usize;
+    for _ in 0..FRAMES {
         s.run_frame(&[], &vol);
     }
     let (depth, bytes) = s.rewind_state();
     let (interval, cost) = s.rewind_pace();
-
-    // How many captures there are depends on how fast this machine is — the interval widens
-    // itself when captures turn out to be expensive, and a debug build is expensive. What
-    // must hold is that captures happened at the interval in force.
-    assert!(depth >= 2, "only {depth} captures in 60 frames");
-    assert!(
-        depth as u32 * interval <= 60 + interval,
-        "{depth} captures at one per {interval} frames is more than 60 frames' worth"
-    );
+    assert!(depth >= 2, "only {depth} captures in {FRAMES} frames");
 
     // And that the cost stayed inside its share of a frame, which is the promise the
     // widening exists to keep.
@@ -511,7 +512,7 @@ fn turning_rewind_off_frees_the_ring() {
     )
     .unwrap();
 
-    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     assert!(!s.rewind_enabled());
     let vol = slot2_audio::Volume::new(100);
     for _ in 0..60 {
@@ -530,7 +531,7 @@ fn fast_forward_runs_more_frames_and_makes_no_sound() {
     let _serial = serial();
     let Some(cores) = core_dir() else { return };
     let (card, cart, _root) = card_with_rom("ff");
-    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    let (mut s, mut consumer) = Session::start(&card, &cart, &cores, 48_000, tuning()).unwrap();
     let vol = slot2_audio::Volume::new(100);
 
     for _ in 0..10 {

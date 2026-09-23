@@ -60,6 +60,7 @@ pub fn run(boot: Boot) {
         card,
         crate::core_dir(&boot.root),
         slot2_audio::DEVICE_RATE,
+        slot2::tuning_for(&boot.detected.profile),
         std::env::var_os("SLOT2_DEBUG_FRAME").is_some(),
         Screen::List,
     );

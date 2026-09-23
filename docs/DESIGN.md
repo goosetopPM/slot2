@@ -129,6 +129,23 @@ PAR은 플랫폼 상수가 아니다. MD는 256·320 두 폭을 오가면서 둘
 
 **지오메트리 변경**: `SET_GEOMETRY` / `SET_SYSTEM_AV_INFO` 콜백 시 텍스처 재할당·배치 재계산 (MD 폭 전환, SNES 하이레즈). 배치는 매 프레임 코어가 보고한 크기에서 다시 계산하므로 별도 처리가 필요 없고, 텍스처는 크기가 달라진 프레임에서 재할당된다.
 
+**코어 옵션은 세 곳에서 온다** — 콘솔이 어디서 돌든 필요한 것(`PlatformDef`), 이 기기가 감당할 수 있는 것(`Tuning`), 카드에 BIOS가 있는지. 게임별 `.ini`가 그 위를 덮는다.
+
+값 자체는 저자가 RG SP에서 spruceOS를 쓰며 정착시킨 설정에서 출발했다 — 아무도 고르지 않은 기본값보다 나은 근거다. 다만 **그대로 옮기지는 않는다**: spruce는 기기 하나를 설정하지만 SLOT2는 세 가지 패널에 걸친 열 대를 상대한다. 그 설정 중 실은 "720×480 화면"이나 "H700의 여유 사이클"에 대한 판단이었던 것은 `Tuning`으로 표현하고, 모든 콘솔에 보편적으로 참인 양 적어두지 않는다.
+
+`Tuning { geometry, fast_cpu }`가 가르는 예:
+
+| 옵션 | 무엇에 달렸나 | 결과 |
+|---|---|---|
+| `mgba_sgb_borders` | 패널 크기 | 세 기기 전부 OFF |
+| `snes9x_gfx_hires` | CPU | 호스트만 ON |
+| `fceumm_sndquality` | CPU | 기기 Low, 호스트 High |
+| `mgba_idle_optimization` | 무관 | 항상 `Remove Known` |
+
+SGB 테두리는 화면을 감싸는 게 아니라 코어 출력을 160×144에서 **256×224로 교체**한다. 정수 배율이 전체에 적용되므로 게임 자체가 한 단계 작아진다 — 640×480에서 3×→2×, 720×720에서 4×→2×. 우리 세 패널 전부 손해라 전부 끈다. 기준은 "테두리를 껴도 3× 이상 남는가"이고, 그건 TV 크기부터 참이다. 반대로 SNES 하이레즈(512×448)는 세 패널 모두 1×로 들어가므로 화면이 아니라 사이클의 문제다.
+
+**코어의 aspect·overscan 옵션은 하나도 설정하지 않는다.** 둘 다 프론트엔드가 `PlatformDef`에서 결정하므로, 코어에게도 시키면 보정이 두 번 걸린다. FCEUmm의 기본 8줄 크롭이 실제로 그럴 뻔했고, 테스트가 막는다.
+
 **셰이더 프리셋**: `None`, `SharpBilinear`, `Lcd3x`(휴대기 기본), `ZfastCrt`(거치기 기본), `Scanline`. GLSL ES 단일 패스. 표준 uniform: `TextureSize`, `InputSize`, `OutputSize`, `FrameCount` — 후일 `.glslp` 호환의 기반.
 
 **오버레이**: `assets/overlays/<platform>/<geometry>.png` 및 카드 `System/Overlays/` 덮어쓰기. 게임 레이어 위, UI 레이어 아래.

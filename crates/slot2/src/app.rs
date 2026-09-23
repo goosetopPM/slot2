@@ -70,6 +70,7 @@ pub struct App {
     card: Card,
     core_dir: PathBuf,
     sink_rate: u32,
+    tuning: slot2_retro::Tuning,
     platform_index: usize,
     carts: Vec<Cart>,
     session: Option<Session>,
@@ -87,6 +88,7 @@ impl App {
             Card::new("."),
             PathBuf::from("."),
             48_000,
+            slot2_retro::Tuning::handheld((720, 480)),
             debug_frame,
             Screen::Splash,
         )
@@ -97,6 +99,7 @@ impl App {
         card: Card,
         core_dir: PathBuf,
         sink_rate: u32,
+        tuning: slot2_retro::Tuning,
         debug_frame: bool,
         screen: Screen,
     ) -> Self {
@@ -110,6 +113,7 @@ impl App {
             card,
             core_dir,
             sink_rate,
+            tuning,
             platform_index: Platform::ALL
                 .iter()
                 .position(|p| *p == Platform::Gba)
@@ -222,7 +226,13 @@ impl App {
         let Some(cart) = self.carts.get(self.list.selected).cloned() else {
             return;
         };
-        match Session::start(&self.card, &cart, &self.core_dir, self.sink_rate) {
+        match Session::start(
+            &self.card,
+            &cart,
+            &self.core_dir,
+            self.sink_rate,
+            self.tuning,
+        ) {
             Ok((session, consumer)) => {
                 eprintln!("slot2: playing {}", cart.title);
                 self.session = Some(session);

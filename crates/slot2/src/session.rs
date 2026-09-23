@@ -4,7 +4,7 @@
 //! Implementation notes for task 09 (see tasks/09-play.md):
 //!
 //! ## Starting
-//! `Session::start(card, cart, core_dir, sink_rate)`:
+//! `Session::start(card, cart, core_dir, sink_rate, tuning)`:
 //! 1. `registry::def(platform)` for the core and its option presets.
 //! 2. Find the core file: `core_dir.join(CoreId::file_name())`; missing → `Error::NoCore`.
 //! 3. `Env { system_dir: card.bios_dir(), save_dir: card.root().join("Saves"), options, language: 0 }`.
@@ -167,6 +167,7 @@ impl Session {
         cart: &Cart,
         core_dir: &Path,
         sink_rate: u32,
+        tuning: slot2_retro::Tuning,
     ) -> Result<(Session, Consumer), Error> {
         let retro_platform = match cart.platform {
             slot2_store::Platform::Gb => slot2_retro::Platform::Gb,
@@ -210,7 +211,7 @@ impl Session {
             .bios
             .iter()
             .any(|name| card.bios_dir().join(name).exists());
-        let options = slot2_retro::options_for(retro_platform, bios_present);
+        let options = slot2_retro::options_for(retro_platform, bios_present, tuning);
 
         let env = slot2_retro::Env {
             system_dir: card.bios_dir(),

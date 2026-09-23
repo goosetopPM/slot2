@@ -96,6 +96,7 @@ pub fn run(boot: Boot) {
         card,
         crate::core_dir(&boot.root),
         slot2_audio::DEVICE_RATE,
+        slot2::tuning_for(&profile),
         true,
         Screen::List,
     );

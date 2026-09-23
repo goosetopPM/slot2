@@ -21,7 +21,7 @@ pub mod rewind;
 pub use host::Core;
 pub use registry::{
     def, joypad_bit, mask_for, options_for, Aspect, Core as CoreId, LogicalButton, Overscan,
-    Platform, PlatformDef, PLATFORMS,
+    Platform, PlatformDef, Tuning, PLATFORMS,
 };
 pub use rewind::{Rewind, RewindBudget};
 
