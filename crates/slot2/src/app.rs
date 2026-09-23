@@ -28,7 +28,7 @@ use slot2_gfx::Canvas;
 use slot2_input::{Action, Button, Event, GestureConfig, Gestures, State};
 use slot2_retro::LogicalButton;
 use slot2_store::{Card, Cart, Platform};
-use slot2_ui::{GameList, PowerMenu, Splash, UiCtx};
+use slot2_ui::{shelf_view::ShelfView, PowerMenu, Splash, UiCtx};
 
 use crate::session::Session;
 
@@ -65,7 +65,7 @@ pub struct App {
     pub state: State,
     pub gestures: Gestures,
     pub splash: Splash,
-    pub list: GameList,
+    pub shelf_view: ShelfView,
     pub volume: slot2_audio::Volume,
     card: Card,
     core_dir: PathBuf,
@@ -78,6 +78,7 @@ pub struct App {
     pending_consumer: Option<slot2_audio::Consumer>,
     sink_request: Option<SinkRequest>,
     exit: Option<Exit>,
+    last_tick: Option<Instant>,
 }
 
 impl App {
@@ -108,7 +109,7 @@ impl App {
             state: State::default(),
             gestures: Gestures::new(GestureConfig::default()),
             splash: Splash { debug_frame },
-            list: GameList::default(),
+            shelf_view: ShelfView::default(),
             volume: slot2_audio::Volume::default(),
             card,
             core_dir,
@@ -123,6 +124,7 @@ impl App {
             pending_consumer: None,
             sink_request: None,
             exit: None,
+            last_tick: None,
         };
         if screen == Screen::List {
             app.rescan();
@@ -132,6 +134,19 @@ impl App {
 
     pub fn exit(&self) -> Option<Exit> {
         self.exit
+    }
+
+    pub fn shelf_len(&self) -> usize {
+        self.shelf_view.shelf.len()
+    }
+
+    pub fn selected(&self) -> usize {
+        self.shelf_view.shelf.selected()
+    }
+
+    /// True while the row is still sliding.
+    pub fn shelf_settling(&self) -> bool {
+        self.shelf_view.shelf.settling()
     }
 
     pub fn platform(&self) -> Platform {
@@ -158,7 +173,7 @@ impl App {
 
     pub fn rescan(&mut self) {
         self.carts = self.card.scan(self.platform());
-        self.list.clamp(self.carts.len());
+        self.shelf_view.shelf.set_len(self.carts.len());
     }
 
     pub fn feed(&mut self, event: &Event) {
@@ -170,6 +185,18 @@ impl App {
     }
 
     pub fn tick(&mut self, now: Instant) {
+        if let Some(last) = self.last_tick {
+            let dt = (now - last).as_secs_f32();
+            // A frame that takes a second — loading a core does — integrated against the
+            // row's spring is not slow, it is unstable: explicit Euler diverges once dt
+            // passes 2/OMEGA, and the row flies off and never returns. Clamping makes a
+            // slow frame cost the animation some lag, which nobody watching a stalled
+            // frontend will notice, instead of the row.
+            let dt = dt.min(1.0 / 30.0);
+            self.shelf_view.shelf.update(dt);
+        }
+        self.last_tick = Some(now);
+
         let actions = self.gestures.tick(now);
         for action in actions {
             self.act(action);
@@ -223,7 +250,7 @@ impl App {
     }
 
     fn start_selected(&mut self) {
-        let Some(cart) = self.carts.get(self.list.selected).cloned() else {
+        let Some(cart) = self.carts.get(self.shelf_view.shelf.selected()).cloned() else {
             return;
         };
         match Session::start(
@@ -274,8 +301,8 @@ impl App {
                 self.screen = Screen::Power(PowerMenu::default());
             }
             (Screen::List, Action::Tap(b)) => match b {
-                Button::Down => self.list.down(self.carts.len()),
-                Button::Up => self.list.up(),
+                Button::Left => self.shelf_view.shelf.left(),
+                Button::Right => self.shelf_view.shelf.right(),
                 Button::L1 => self.switch_platform(-1),
                 Button::R1 => self.switch_platform(1),
                 Button::A => self.start_selected(),
@@ -333,13 +360,10 @@ impl App {
         match self.screen {
             Screen::Splash => self.splash.draw(canvas, ctx),
             Screen::List => {
-                let folder = self.platform().folder();
-                // `carts` is borrowed immutably while `list.draw` needs `ctx` mutably; the
-                // list does not touch the app, so a local clone of the slice reference is
-                // enough.
-                let carts = std::mem::take(&mut self.carts);
-                self.list.draw(canvas, ctx, folder, &carts);
-                self.carts = carts;
+                let platform = self.platform();
+                let titles: Vec<&str> = self.carts.iter().map(|c| c.title.as_str()).collect();
+                let safe = ctx.safe;
+                self.shelf_view.draw(canvas, ctx, &safe, platform, &titles);
             }
             Screen::Playing => {
                 if let Some(s) = self.session.as_mut() {
@@ -353,10 +377,10 @@ impl App {
                     s.upload_video(canvas);
                     s.draw(canvas, ctx);
                 } else if self.screen != Screen::Splash && !self.carts.is_empty() {
-                    let folder = self.platform().folder();
-                    let carts = std::mem::take(&mut self.carts);
-                    self.list.draw(canvas, ctx, folder, &carts);
-                    self.carts = carts;
+                    let platform = self.platform();
+                    let titles: Vec<&str> = self.carts.iter().map(|c| c.title.as_str()).collect();
+                    let safe = ctx.safe;
+                    self.shelf_view.draw(canvas, ctx, &safe, platform, &titles);
                 } else {
                     self.splash.draw(canvas, ctx);
                 }
