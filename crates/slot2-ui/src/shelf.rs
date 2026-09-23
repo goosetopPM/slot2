@@ -208,6 +208,31 @@ impl Shelf {
         (nearest == off).then(|| at(off))
     }
 
+    /// Where the row would draw the selected cart this frame, in panel pixels: its left
+    /// edge, at the cartridge's natural width.
+    ///
+    /// The insert asks for this rather than assuming the middle of the panel. Pressing A
+    /// while the row is still sliding leaves the selection off centre, and a cart that
+    /// starts its travel from the centre anyway jumps sideways on the frame the button is
+    /// pressed.
+    pub fn rest_x(&self, safe: &SafeArea, cart: (f32, f32)) -> f32 {
+        todo!()
+    }
+
+    /// The row while a cart is going into the slot.
+    ///
+    /// `recede` clears the way: 0.0 is the row at rest, 1.0 has every other cart pushed off
+    /// the sides and gone. They part outwards rather than fading where they stand, so the
+    /// row reads as making way for the one that was chosen.
+    ///
+    /// The selection itself is left out once `recede` is above zero, because the cart going
+    /// into the slot is drawn by the insert at the same place the row would draw it.
+    /// Leaving it in the row as well puts two of one cart on screen, and the travel then
+    /// reads as a copy sliding away from the original.
+    pub fn parted(&self, safe: &SafeArea, cart: (f32, f32), recede: f32) -> Vec<Placement> {
+        todo!()
+    }
+
     /// Every cart to draw this frame, nearest the selection last so it lands on top.
     /// Anything entirely off the panel is dropped.
     ///

@@ -14,6 +14,7 @@
 
 pub mod art;
 pub mod face;
+pub mod insert;
 pub mod layout;
 pub mod power_menu;
 pub mod shelf;

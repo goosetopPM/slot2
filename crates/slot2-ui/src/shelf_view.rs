@@ -19,6 +19,25 @@ pub struct ShelfView {
 }
 
 impl ShelfView {
+    /// Draw the row making way, and the chosen cart on its way into the slot.
+    ///
+    /// `seat` is `insert::seat_in(t)` on the way in and `insert::seat_out(t)` on the way
+    /// out: this draws a position, not a direction, so one method covers both.
+    ///
+    /// At `seat == 0.0` what comes out must be what [`ShelfView::draw`] draws, because that
+    /// is the frame the button was pressed on and nothing has moved yet.
+    pub fn draw_insert(
+        &mut self,
+        canvas: &mut dyn Canvas,
+        ctx: &mut UiCtx,
+        safe: &SafeArea,
+        platform: Platform,
+        titles: &[&str],
+        seat: f32,
+    ) {
+        todo!()
+    }
+
     /// Draw the row and the slot it sits above.
     ///
     /// `titles` is one per cart, in the same order as the row. The caller owns the
