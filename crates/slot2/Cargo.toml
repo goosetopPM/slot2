@@ -31,3 +31,6 @@ slot2-input = { workspace = true }
 slot2-audio = { workspace = true }
 slot2-retro = { workspace = true }
 slot2-store = { workspace = true }
+
+[dev-dependencies]
+png = "0.17"

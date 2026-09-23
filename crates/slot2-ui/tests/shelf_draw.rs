@@ -55,12 +55,34 @@ fn draw(
 #[test]
 fn an_empty_shelf_still_draws_its_slot() {
     // A shelf with no games is not a blank screen: the slot is the thing that says this is
-    // a shelf and that something is meant to go in it.
+    // a shelf and that something is meant to go in it. It is chrome rather than artwork —
+    // there is no drawing of a cartridge slot — so what to look for is rectangles.
     let mut v = ShelfView::default();
-    let (canvas, _) = draw(&mut v, Geometry::W720H480, Platform::Gba, 0);
+    let (canvas, safe) = draw(&mut v, Geometry::W720H480, Platform::Gba, 0);
+    let rects: Vec<&Op> = canvas
+        .frame()
+        .iter()
+        .filter(|o| matches!(o, Op::Rect { .. }))
+        .collect();
     assert!(
-        !images(&canvas).is_empty(),
-        "an empty shelf drew absolutely nothing"
+        rects.len() >= 3,
+        "an empty shelf drew {} rects",
+        rects.len()
+    );
+
+    // And it is at the foot of the panel, where a slot is, not floating in the middle.
+    let lowest = canvas
+        .frame()
+        .iter()
+        .filter_map(|o| match o {
+            Op::Rect { y, h, .. } => Some(y + h),
+            _ => None,
+        })
+        .fold(0.0f32, f32::max);
+    assert!(
+        (lowest - safe.panel_h as f32).abs() < 1.0,
+        "the slot ends at {lowest} on a {}-tall panel",
+        safe.panel_h
     );
 }
 
@@ -92,21 +114,48 @@ fn the_shell_is_tinted_with_the_platforms_colour() {
 fn switching_platform_changes_the_artwork_and_the_colour() {
     // L1/R1 moves between shelves, and a Game Boy shelf has to look like one. This is M3's
     // acceptance criterion: "GB 선반에서 GB 카트·GB 스킨으로 바뀜".
+    //
+    // Both shelves are drawn into *one* canvas. Texture ids are handed out per canvas and
+    // start again at 1 for each, so comparing ids across two canvases compares nothing —
+    // an earlier version of this test passed on that coincidence.
     let mut v = ShelfView::default();
-    let (gba, _) = draw(&mut v, Geometry::W720H480, Platform::Gba, 3);
-    let (gb, _) = draw(&mut v, Geometry::W720H480, Platform::Gb, 3);
+    let safe = SafeArea::for_geometry(Geometry::W720H480);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx();
+    v.shelf.set_len(3);
+    let t = ["A", "B", "C"];
 
-    // TexId is an opaque handle with no ordering, so collect the set rather than sorting.
-    let tex = |c: &RecordingCanvas| -> std::collections::BTreeSet<u32> {
-        images(c).iter().map(|i| i.0 .0).collect()
+    v.draw(&mut canvas, &mut c, &safe, Platform::Gba, &t);
+    let split = canvas.ops.len();
+    v.draw(&mut canvas, &mut c, &safe, Platform::Gb, &t);
+
+    // The biggest thing on a shelf is the selected cartridge. Asking whether *anything*
+    // drawn was taller than wide catches a title glyph instead — "A" is.
+    let shown = |ops: &[Op]| -> (std::collections::BTreeSet<u32>, bool) {
+        let mut tex = std::collections::BTreeSet::new();
+        let mut biggest = (0.0f32, 0.0f32);
+        for o in ops {
+            if let Op::Image { tex: t, w, h, .. } = o {
+                tex.insert(t.0);
+                if w * h > biggest.0 * biggest.1 {
+                    biggest = (*w, *h);
+                }
+            }
+        }
+        (tex, biggest.1 > biggest.0)
     };
-    assert_ne!(tex(&gba), tex(&gb), "both shelves drew the same artwork");
+    let (gba_tex, gba_tall) = shown(&canvas.ops[..split]);
+    let (gb_tex, gb_tall) = shown(&canvas.ops[split..]);
+
+    assert!(
+        gba_tex.intersection(&gb_tex).count() < gba_tex.len(),
+        "both shelves drew the same artwork: {gba_tex:?} and {gb_tex:?}"
+    );
 
     // A Game Boy pak is taller than it is wide; a GBA cart is wider than tall. Whatever
     // else changed, the shape must have.
-    let tall = |c: &RecordingCanvas| images(c).iter().any(|(_, _, _, w, h, _)| h > w);
-    assert!(tall(&gb), "the Game Boy shelf drew nothing pak-shaped");
-    assert!(!tall(&gba), "the GBA shelf drew something pak-shaped");
+    assert!(gb_tall, "the Game Boy shelf drew nothing pak-shaped");
+    assert!(!gba_tall, "the GBA shelf drew something pak-shaped");
 }
 
 #[test]

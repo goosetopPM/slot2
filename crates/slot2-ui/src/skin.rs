@@ -5,6 +5,11 @@
 //! artwork's `viewBox` and the test reads them back out of the files, so a typo here fails
 //! the build rather than drawing a shelf of wrong-shaped carts.
 //!
+//! There is no drawing for the slot a cartridge goes into. DESIGN §7 anticipates one per
+//! platform; until somebody draws it the slot is chrome built from rectangles, the way the
+//! original built it, and `shelf_view` owns that. (`socket.svg` is not it — that is the IC
+//! socket on the core picker's board.)
+//!
 //! Three shelves have drawings and four do not. The four say so (`borrowed`) instead of
 //! quietly wearing the Game Boy Advance's, because a silent fallback leaves nobody able to
 //! tell which shelves still need art.
@@ -48,14 +53,9 @@ pub struct PlatformSkin {
     pub label: Rect,
     /// What colour to draw the shell when nothing is known about the game.
     pub shell: Shell,
-    pub port: &'static str,
-    pub port_size: (f32, f32),
     /// True when this platform has no drawing of its own and is using another's.
     pub borrowed: bool,
 }
-
-const SOCKET: &str = include_str!("../../../assets/skins/socket.svg");
-const PORT_SIZE: (f32, f32) = (41.0, 29.8);
 
 const CART_GBA: &str = include_str!("../../../assets/skins/cart.svg");
 const DETAIL_GBA: &str = include_str!("../../../assets/skins/cart_detail.svg");
@@ -113,8 +113,6 @@ static SKIN_GB: PlatformSkin = PlatformSkin {
     cart_size: SIZE_GB,
     label: LABEL_GB,
     shell: SHELL_GB,
-    port: SOCKET,
-    port_size: PORT_SIZE,
     borrowed: false,
 };
 
@@ -125,8 +123,6 @@ static SKIN_GBC: PlatformSkin = PlatformSkin {
     cart_size: SIZE_GB,
     label: LABEL_GB,
     shell: SHELL_GBC,
-    port: SOCKET,
-    port_size: PORT_SIZE,
     borrowed: false,
 };
 
@@ -137,8 +133,6 @@ static SKIN_GBA: PlatformSkin = PlatformSkin {
     cart_size: SIZE_GBA,
     label: LABEL_GBA,
     shell: SHELL_GBA,
-    port: SOCKET,
-    port_size: PORT_SIZE,
     borrowed: false,
 };
 
@@ -151,8 +145,6 @@ const fn borrowing(platform: Platform) -> PlatformSkin {
         cart_size: SIZE_GBA,
         label: LABEL_GBA,
         shell: SHELL_GBA,
-        port: SOCKET,
-        port_size: PORT_SIZE,
         borrowed: true,
     }
 }

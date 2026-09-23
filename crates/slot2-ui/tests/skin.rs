@@ -35,7 +35,6 @@ fn every_platform_has_a_skin() {
         let s: &PlatformSkin = skin::skin(p);
         assert_eq!(s.platform, p, "the table is out of order or keyed wrong");
         assert!(!s.cart.is_empty(), "{p:?} has no cart artwork");
-        assert!(!s.port.is_empty(), "{p:?} has no slot artwork");
     }
 }
 
@@ -63,7 +62,6 @@ fn the_declared_sizes_are_the_ones_in_the_files() {
     for p in ALL {
         let s = skin::skin(p);
         assert_eq!(view_box(s.cart), s.cart_size, "{p:?} cart size");
-        assert_eq!(view_box(s.port), s.port_size, "{p:?} port size");
         if !s.cart_detail.is_empty() {
             assert_eq!(
                 view_box(s.cart_detail),
@@ -186,11 +184,7 @@ fn every_skins_artwork_actually_parses() {
     // The table points at files; this is what says the files are real and drawable.
     for p in ALL {
         let s = skin::skin(p);
-        for (what, src) in [
-            ("cart", s.cart),
-            ("detail", s.cart_detail),
-            ("port", s.port),
-        ] {
+        for (what, src) in [("cart", s.cart), ("detail", s.cart_detail)] {
             if src.is_empty() {
                 continue;
             }

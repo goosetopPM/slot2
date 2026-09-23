@@ -8,6 +8,20 @@ use crate::shelf::Shelf;
 use crate::skin;
 use crate::UiCtx;
 
+/// How much wider than a cartridge the slot's mouth is.
+const MOUTH_EXTRA: f32 = 14.0;
+/// The band of chrome across the foot of the panel that the mouth is cut into.
+const MOUTH_H: f32 = 58.0;
+/// The opening itself.
+const SLIT_H: f32 = 9.0;
+/// A highlight along the top edge of the band, which is what makes it read as a surface
+/// standing proud of the background rather than a painted rectangle.
+const LIP_H: f32 = 2.0;
+
+const BAND: Color = Color::from_rgb8(0x1E, 0x21, 0x26);
+const LIP: Color = Color::from_rgb8(0x3A, 0x3F, 0x47);
+const SLIT: Color = Color::from_rgb8(0x07, 0x08, 0x0A);
+
 #[derive(Default)]
 pub struct ShelfView {
     pub shelf: Shelf,
@@ -30,20 +44,21 @@ impl ShelfView {
         let skin = skin::skin(platform);
         let panel_w = safe.panel_w as f32;
 
-        // 1. The slot. Centred, width is about 1/3 of the panel.
-        // It is drawn even when the row is empty.
-        let slot_w = (panel_w / 3.0).round();
-        let slot_scale = slot_w / skin.port_size.0;
-        let slot_h = (skin.port_size.1 * slot_scale).round();
-        let slot_x = ((panel_w - slot_w) / 2.0).round();
-        let slot_y = safe.panel_h as f32 - slot_h;
+        // 1. The slot, which is chrome rather than artwork: a band across the foot of the
+        // panel, a mouth a little wider than a cartridge, and a lip above it. Ported from
+        // the original's `slot_chrome`, whose proportions are in the same units the cart
+        // drawings are, so they carry across unscaled.
+        //
+        // Drawn even when the row is empty — a shelf with no games is not a blank screen,
+        // and the slot is what says something is meant to go here.
+        let panel_h = safe.panel_h as f32;
+        let band_y = panel_h - MOUTH_H;
+        let mouth_w = skin.cart_size.0 + MOUTH_EXTRA;
+        let mouth_x = ((panel_w - mouth_w) / 2.0).round();
 
-        if let Some(tex) = self
-            .cache
-            .mask(canvas, skin.port, slot_w as u32, slot_h as u32)
-        {
-            canvas.image(tex, slot_x, slot_y, slot_w, slot_h, Color::WHITE);
-        }
+        canvas.rect(0.0, band_y, panel_w, MOUTH_H, BAND);
+        canvas.rect(0.0, band_y, panel_w, LIP_H, LIP);
+        canvas.rect(mouth_x, band_y + LIP_H + 5.0, mouth_w, SLIT_H, SLIT);
 
         // 2. The carts.
         //
