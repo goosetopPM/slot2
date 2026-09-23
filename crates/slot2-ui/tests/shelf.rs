@@ -307,3 +307,56 @@ fn clearing_the_cache_frees_what_it_uploaded() {
         .count();
     assert_eq!(frees, 2, "a cleared cache left textures behind");
 }
+
+#[test]
+fn the_row_stands_above_the_slot_on_every_panel() {
+    // A shelf shows cartridges above the thing they go into. Measuring the row from the
+    // middle of the panel breaks that as soon as the panel is taller than it is: on a
+    // 720x720 the slot drops to the foot and the row would stay where it was, leaving a
+    // field of background between two things that are meant to relate.
+    use slot2_ui::shelf::{CENTRE_ABOVE_SLOT, MOUTH_H};
+    for g in GEOMETRIES {
+        let sa = safe(g);
+        let p = Shelf::new(1).placements(&sa, CART);
+        let centre = p[0].y + p[0].h / 2.0;
+        let slot_top = sa.panel_h as f32 - MOUTH_H;
+        assert!(
+            (slot_top - centre - CENTRE_ABOVE_SLOT).abs() < 1.0,
+            "{g:?}: the row's centre is {} above the slot, not {CENTRE_ABOVE_SLOT}",
+            slot_top - centre
+        );
+        assert!(p[0].y >= 0.0, "{g:?}: the row is off the top of the panel");
+        assert!(
+            p[0].y + p[0].h < slot_top,
+            "{g:?}: the row overlaps the slot"
+        );
+    }
+}
+
+#[test]
+fn the_480_tall_panels_did_not_move() {
+    // Placing the row against the slot has to be a change to the tall panel only. Both
+    // 480-tall geometries were centred before and must still be.
+    for g in [Geometry::W640H480, Geometry::W720H480] {
+        let sa = safe(g);
+        let p = Shelf::new(1).placements(&sa, CART);
+        let centre = p[0].y + p[0].h / 2.0;
+        assert!(
+            (centre - sa.panel_h as f32 / 2.0).abs() < 1.0,
+            "{g:?}: centre moved to {centre} from {}",
+            sa.panel_h as f32 / 2.0
+        );
+    }
+}
+
+#[test]
+fn the_tall_panel_sits_lower_than_centred() {
+    let sa = safe(Geometry::W720H720);
+    let p = Shelf::new(1).placements(&sa, CART);
+    let centre = p[0].y + p[0].h / 2.0;
+    assert!(
+        centre > sa.panel_h as f32 / 2.0 + 50.0,
+        "the row is at {centre}, barely below the panel's middle at {}",
+        sa.panel_h as f32 / 2.0
+    );
+}

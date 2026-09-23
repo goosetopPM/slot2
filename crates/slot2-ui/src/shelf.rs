@@ -26,6 +26,32 @@ pub const SLOTS: i32 = 3;
 /// Critically damped, so a flick lands on a cart instead of bouncing past and returning.
 const OMEGA: f32 = 16.0;
 
+// The slot the carts go into. Its proportions live here rather than with the drawing code
+// because where the row stands is measured off them.
+
+/// How much wider than a cartridge the slot's mouth is.
+pub const MOUTH_EXTRA: f32 = 14.0;
+/// The band of chrome across the foot of the panel that the mouth is cut into.
+pub const MOUTH_H: f32 = 58.0;
+/// The opening itself.
+pub const SLIT_H: f32 = 9.0;
+/// A highlight along the top edge of the band, which is what makes it read as a surface
+/// standing proud of the background rather than a painted rectangle.
+pub const LIP_H: f32 = 2.0;
+
+/// How far above the slot the row's centre line sits.
+///
+/// The row is placed against the slot, not against the middle of the panel. What a shelf
+/// shows is cartridges standing above the thing they go into, and measuring from the panel
+/// centre breaks that as soon as the panel is taller: on a 720x720 the slot dropped to the
+/// foot and the row stayed where it was, leaving them unrelated with a field of background
+/// between.
+///
+/// The number is not chosen, it is measured: on a 480-tall panel, centring the row put its
+/// centre at 240 and the slot band at 422. Keeping the distance keeps every 480-tall panel
+/// exactly as it was, and moves the taller one down to match.
+pub const CENTRE_ABOVE_SLOT: f32 = 182.0;
+
 /// Where one cartridge sits on the row this frame, in panel pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
@@ -196,12 +222,16 @@ impl Shelf {
         let panel_h = safe.panel_h as f32;
         let (natural_w, natural_h) = cart;
 
-        // Carts of one platform share a *centre*, not a floor. A Game Boy pak is 253 units
-        // tall against a GBA cart's 135, and measured from a shared floor the pak sat 59px
-        // higher and crowded the top of the screen. A shrunken neighbour then keeps its foot
-        // on this line rather than shrinking about its own middle, so the row reads as
-        // objects standing on a shelf instead of carts floating.
-        let floor = (panel_h + natural_h) / 2.0;
+        // Every platform's carts share a *centre* line, not a floor. A Game Boy pak is 253
+        // units tall against a GBA cart's 135, and measured from a shared floor the pak sat
+        // 59px higher and crowded the top of the screen. A shrunken neighbour then keeps its
+        // foot on the line the selection stands on rather than shrinking about its own
+        // middle, so the row reads as objects standing on a shelf instead of carts floating.
+        //
+        // That shared line is placed against the slot rather than the panel's middle; see
+        // `CENTRE_ABOVE_SLOT`.
+        let centre = panel_h - MOUTH_H - CENTRE_ABOVE_SLOT;
+        let floor = centre + natural_h / 2.0;
 
         let mut out: Vec<Placement> = (-SLOTS..=SLOTS)
             .filter_map(|slot| {

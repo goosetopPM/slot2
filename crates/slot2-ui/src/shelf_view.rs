@@ -4,19 +4,9 @@ use slot2_store::Platform;
 use crate::art::ArtCache;
 use crate::face;
 use crate::layout::SafeArea;
-use crate::shelf::Shelf;
+use crate::shelf::{Shelf, LIP_H, MOUTH_EXTRA, MOUTH_H, SLIT_H};
 use crate::skin;
 use crate::UiCtx;
-
-/// How much wider than a cartridge the slot's mouth is.
-const MOUTH_EXTRA: f32 = 14.0;
-/// The band of chrome across the foot of the panel that the mouth is cut into.
-const MOUTH_H: f32 = 58.0;
-/// The opening itself.
-const SLIT_H: f32 = 9.0;
-/// A highlight along the top edge of the band, which is what makes it read as a surface
-/// standing proud of the background rather than a painted rectangle.
-const LIP_H: f32 = 2.0;
 
 const BAND: Color = Color::from_rgb8(0x1E, 0x21, 0x26);
 const LIP: Color = Color::from_rgb8(0x3A, 0x3F, 0x47);
