@@ -185,7 +185,14 @@ impl App {
     /// doing, so a clip that is already there survives the stall and a clip being dripped in
     /// would not.
     fn play(&mut self, clip: slot2_audio::Sfx) {
-        todo!()
+        let samples = clip.render(self.sink_rate);
+        if samples.is_empty() {
+            return;
+        }
+        let (mut producer, consumer) = slot2_audio::Ring::new(samples.len() / 2).split();
+        producer.write(&samples);
+        self.pending_consumer = Some(consumer);
+        self.sink_request = Some(SinkRequest::Open);
     }
 
     pub fn shelf_len(&self) -> usize {
@@ -291,6 +298,22 @@ impl App {
     /// Loading when the button was pressed instead would freeze the *first* frame of the
     /// animation, which is the jump cut this replaced with extra steps.
     fn advance_insert(&mut self) {
+        if !self.sfx_fired {
+            match self.screen {
+                Screen::Inserting
+                    if self.anim >= insert::SEATED_AT - slot2_audio::Sfx::Insert.lead() =>
+                {
+                    self.play(slot2_audio::Sfx::Insert);
+                    self.sfx_fired = true;
+                }
+                Screen::Ejecting => {
+                    self.play(slot2_audio::Sfx::Eject);
+                    self.sfx_fired = true;
+                }
+                _ => {}
+            }
+        }
+
         match self.screen {
             Screen::Inserting if self.session.is_none() => {
                 if self.anim < insert::SEATED_AT {
@@ -302,6 +325,7 @@ impl App {
                 if self.session.is_none() {
                     self.screen = Screen::Ejecting;
                     self.anim = 0.0;
+                    self.sfx_fired = false;
                 }
             }
             // Waits on the session existing rather than on the clock running out. A cold
@@ -429,6 +453,7 @@ impl App {
                 self.stop_session();
                 self.screen = Screen::Ejecting;
                 self.anim = 0.0;
+                self.sfx_fired = false;
             }
 
             // Not on `Inserting` or `Ejecting`. A menu hold takes about as long as the whole
@@ -446,6 +471,7 @@ impl App {
                 Button::A if !self.carts.is_empty() => {
                     self.screen = Screen::Inserting;
                     self.anim = 0.0;
+                    self.sfx_fired = false;
                 }
                 Button::A => {
                     self.refusal = Some(slot2_ui::refusal::Refusal::new());

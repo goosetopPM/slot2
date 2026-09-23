@@ -12,6 +12,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use slot2_audio::Sfx;
 use slot2_gfx::{Op, RecordingCanvas};
 use slot2_input::{Button, Event};
 use slot2_store::{Card, Platform};
@@ -159,14 +160,20 @@ fn the_core_is_not_asked_for_until_the_cart_seats() {
     let t = Instant::now();
     tap(&mut a, Button::A, t);
 
-    let before = run(&mut a, t + Duration::from_millis(60), SEATED_AT - 0.05);
+    // The quiet window ends where the slot's own clip starts, a lead before the contacts,
+    // and not at the seat: past that point an open device is the noise, not the core. What
+    // this test is about either way is that nothing has *loaded* on the way down the rails.
+    let quiet = SEATED_AT - Sfx::Insert.lead() - 0.02;
+    let before = run(&mut a, t + Duration::from_millis(60), quiet);
+    assert!(a.take_sink_request().is_none(), "audio opened early");
+
+    let before = run(&mut a, before, SEATED_AT - 0.05 - quiet);
     assert_eq!(
         a.screen,
         Screen::Inserting,
         "the insert ended before the cart reached the slot"
     );
     assert!(a.session().is_none());
-    assert!(a.take_sink_request().is_none(), "audio opened early");
 
     // And by a frame or two past the seat it has been asked for and refused.
     run(&mut a, before, 0.1);

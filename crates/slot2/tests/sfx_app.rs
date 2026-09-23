@@ -25,7 +25,8 @@ fn app(n: usize) -> (App, PathBuf) {
     card.ensure_layout();
     for g in 0..n {
         std::fs::write(
-            card.games_dir(Platform::Gba).join(format!("Game {g:02}.gba")),
+            card.games_dir(Platform::Gba)
+                .join(format!("Game {g:02}.gba")),
             b"rom",
         )
         .unwrap();
@@ -118,6 +119,10 @@ fn an_insert_makes_one_noise_not_one_a_frame() {
     let t = Instant::now();
     tap(&mut a, Button::A, t);
 
+    // Counted over the insert and no further. This cart has no core, so it is on its way back
+    // out the frame after it seats, and the eject's own noise belongs to the test below. A
+    // clip fired once a frame still shows up here: the threshold is a lead ahead of the seat,
+    // which is six frames of them.
     let mut opens = 0;
     let mut now = t + Duration::from_millis(60);
     for _ in 0..((SEATED_AT + 0.2) * 60.0) as u32 {
@@ -126,6 +131,9 @@ fn an_insert_makes_one_noise_not_one_a_frame() {
         if a.take_sink_request() == Some(SinkRequest::Open) {
             opens += 1;
             let _ = a.take_consumer();
+        }
+        if a.screen != Screen::Inserting {
+            break;
         }
     }
     assert_eq!(opens, 1, "one insert asked for {opens} sinks");
@@ -201,9 +209,6 @@ fn walking_the_row_is_not_a_noise() {
     for b in [Button::Right, Button::Left, Button::R1, Button::L1] {
         tap(&mut a, b, now);
         now += Duration::from_millis(120);
-        assert!(
-            a.take_sink_request().is_none(),
-            "{b:?} asked for a sink"
-        );
+        assert!(a.take_sink_request().is_none(), "{b:?} asked for a sink");
     }
 }

@@ -43,13 +43,13 @@ impl Sfx {
 
     /// The whole clip, in seconds.
     pub fn seconds(self) -> f32 {
-        todo!()
+        self.pcm().len() as f32 / 2.0 / ASSET_HZ
     }
 
     /// What is left after the contacts: the shell settling on the way in, the shell still
     /// moving on the way out. Nothing should cut across it.
     pub fn tail(self) -> f32 {
-        todo!()
+        self.seconds() - self.lead()
     }
 
     /// Interleaved stereo at `rate`, from mono content.
@@ -57,6 +57,20 @@ impl Sfx {
     /// Stereo because the sink is, not because the sound is: the same sample goes to both
     /// channels. A slot is in the middle of the machine.
     pub fn render(self, rate: u32) -> Vec<i16> {
-        todo!()
+        if rate == 0 {
+            return Vec::new();
+        }
+        let pcm = self.pcm();
+        let mut stereo = Vec::with_capacity(pcm.len());
+        for chunk in pcm.as_chunks::<2>().0 {
+            let s = i16::from_le_bytes(*chunk);
+            stereo.push(s);
+            stereo.push(s);
+        }
+
+        let mut resampler = crate::resample::Resampler::new(ASSET_HZ as u32, rate);
+        let mut out = Vec::with_capacity(resampler.expected_output_frames(stereo.len() / 2) * 2);
+        resampler.process(&stereo, &mut out);
+        out
     }
 }

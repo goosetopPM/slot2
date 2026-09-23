@@ -47,8 +47,11 @@ fn a_clip_is_stereo_and_the_same_in_both_ears() {
     for c in CLIPS {
         let out = c.render(48_000);
         assert_eq!(out.len() % 2, 0, "{c:?}: an odd number of samples");
-        for (i, pair) in out.chunks_exact(2).enumerate() {
-            assert_eq!(pair[0], pair[1], "{c:?}: frame {i} differs between channels");
+        for (i, pair) in out.as_chunks::<2>().0.iter().enumerate() {
+            assert_eq!(
+                pair[0], pair[1],
+                "{c:?}: frame {i} differs between channels"
+            );
         }
     }
 }
