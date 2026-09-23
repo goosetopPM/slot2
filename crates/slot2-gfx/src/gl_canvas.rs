@@ -194,6 +194,19 @@ impl GlCanvas {
             next_tex_id: 1,
         };
 
+        // The offscreen target is bound but nothing has told GL how big it is. A fresh
+        // context's viewport is the window's, so a panel smaller than the window was drawn
+        // stretched to the window and then clipped to the panel — on a 720x480 panel in a
+        // 720x720 window, the row of carts came out half a screen higher than it was asked
+        // for and half again too tall.
+        //
+        // `present` sets this at the end of every frame, which is why the running frontend
+        // looked right and every offscreen render did not: a screenshot test never calls it,
+        // and neither does the first frame after boot.
+        unsafe {
+            gl::Viewport(0, 0, panel.0 as i32, panel.1 as i32);
+        }
+
         canvas.white_tex = canvas.upload_rgba8(1, 1, &[255, 255, 255, 255]);
         canvas.batch_tex = canvas.white_tex;
 
