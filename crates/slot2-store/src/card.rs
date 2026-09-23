@@ -150,6 +150,16 @@ impl Card {
             .join(format!("{}.ini", cart.stem))
     }
 
+    /// The background for one shelf: `Wallpapers/<PLAT>.png`, or `Wallpapers/default.png`
+    /// when the card has no picture for that platform.
+    ///
+    /// Per platform first, because L1 and R1 move between shelves and a Game Boy shelf that
+    /// looks like one is M3's acceptance criterion. A card that wants one picture for
+    /// everything names it `default` and stops there.
+    pub fn wallpaper(&self, p: Platform) -> Option<PathBuf> {
+        todo!()
+    }
+
     /// `Labels/<PLAT>/<stem>.png` if it exists.
     ///
     /// Answered from the card rather than assembled by the caller, because whether the file

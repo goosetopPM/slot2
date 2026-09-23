@@ -338,3 +338,16 @@ mod tests {
         assert_eq!(sub_uv((0, 0), 1, 1, 1, 1), [0.0, 0.0, 1.0, 1.0]);
     }
 }
+
+/// The part of `src` to show so that it *covers* `dest` without distortion.
+///
+/// Cover rather than fit, because a background is the ground the screen stands on and a
+/// letterboxed one is a picture in a frame. The panel comes in three shapes — 4:3, 3:2 and
+/// square — so no single image can match all of them, and something has to give: either the
+/// aspect (which stretches faces), the coverage (which leaves bars), or the edges. The edges
+/// of a background are the part nobody composed.
+///
+/// Returns `[u0, v0, u1, v1]`, centred on the image.
+pub fn cover_uv(src: (u32, u32), dest: (u32, u32)) -> [f32; 4] {
+    todo!()
+}

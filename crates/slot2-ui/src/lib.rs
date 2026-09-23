@@ -14,6 +14,7 @@
 
 pub mod art;
 pub mod face;
+pub mod image;
 pub mod insert;
 pub mod label;
 pub mod layout;
@@ -25,6 +26,7 @@ pub mod skin;
 pub mod splash;
 pub mod svg;
 pub mod toast;
+pub mod wallpaper;
 
 pub use art::ArtCache;
 pub use face::FaceCache;

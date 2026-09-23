@@ -70,6 +70,8 @@ pub struct App {
     pub gestures: Gestures,
     pub splash: Splash,
     pub shelf_view: ShelfView,
+    /// What the shelf stands on. Nothing else paints the whole panel.
+    pub wallpaper: slot2_ui::wallpaper::Wallpaper,
     pub volume: slot2_audio::Volume,
     card: Card,
     core_dir: PathBuf,
@@ -120,6 +122,7 @@ impl App {
             gestures: Gestures::new(GestureConfig::default()),
             splash: Splash { debug_frame },
             shelf_view: ShelfView::default(),
+            wallpaper: slot2_ui::wallpaper::Wallpaper::default(),
             volume: slot2_audio::Volume::default(),
             card,
             core_dir,
