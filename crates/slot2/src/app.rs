@@ -28,7 +28,7 @@ use slot2_gfx::Canvas;
 use slot2_input::{Action, Button, Event, GestureConfig, Gestures, State};
 use slot2_retro::LogicalButton;
 use slot2_store::{Card, Cart, Platform};
-use slot2_ui::{shelf_view::ShelfView, PowerMenu, Splash, UiCtx};
+use slot2_ui::{insert, shelf_view::ShelfView, PowerMenu, Splash, UiCtx};
 
 use crate::session::Session;
 
@@ -83,6 +83,7 @@ pub struct App {
     sink_request: Option<SinkRequest>,
     exit: Option<Exit>,
     last_tick: Option<Instant>,
+    anim: f32,
 }
 
 impl App {
@@ -129,6 +130,7 @@ impl App {
             sink_request: None,
             exit: None,
             last_tick: None,
+            anim: 0.0,
         };
         if screen == Screen::List {
             app.rescan();
@@ -143,7 +145,11 @@ impl App {
     /// How far the cart is into the slot: 0.0 standing on the row, 1.0 seated. `None` when
     /// nothing is going in or out.
     pub fn insert_seat(&self) -> Option<f32> {
-        todo!()
+        match self.screen {
+            Screen::Inserting => Some(insert::seat_in(self.anim)),
+            Screen::Ejecting => Some(insert::seat_out(self.anim)),
+            _ => None,
+        }
     }
 
     pub fn shelf_len(&self) -> usize {
@@ -204,6 +210,11 @@ impl App {
             // frontend will notice, instead of the row.
             let dt = dt.min(1.0 / 30.0);
             self.shelf_view.shelf.update(dt);
+
+            if matches!(self.screen, Screen::Inserting | Screen::Ejecting) {
+                self.anim += dt;
+                self.advance_insert();
+            }
         }
         self.last_tick = Some(now);
 
@@ -213,13 +224,54 @@ impl App {
         }
     }
 
+    /// Carry the insert or the eject on from wherever `anim` has reached.
+    ///
+    /// The core is loaded here, on the frame the cart is seated, and the dwell that follows
+    /// is what the second it costs is hidden behind: what is on screen while it happens is a
+    /// cartridge fully in the slot, which is what a machine loading a cartridge looks like.
+    /// Loading when the button was pressed instead would freeze the *first* frame of the
+    /// animation, which is the jump cut this replaced with extra steps.
+    fn advance_insert(&mut self) {
+        match self.screen {
+            Screen::Inserting if self.session.is_none() => {
+                if self.anim < insert::SEATED_AT {
+                    return;
+                }
+                self.start_selected();
+                if self.session.is_none() {
+                    // No core for this cart — an ordinary state for a half-built card. The
+                    // cart comes back out from where it got to, which is the slot, rather
+                    // than sitting on the seated frame for ever.
+                    self.screen = Screen::Ejecting;
+                    self.anim = 0.0;
+                }
+            }
+            // Waits on the session existing rather than on the clock running out. A cold
+            // core on the device takes longer than the dwell, and without this the screen
+            // freezes once the animation ends — the fault the whole arrangement avoids.
+            Screen::Inserting if self.anim >= insert::INSERT_S => {
+                self.screen = Screen::Playing;
+            }
+            Screen::Ejecting if self.anim >= insert::EJECT_S => {
+                self.screen = Screen::List;
+                // Rescanned on arrival, not on the way out: a row that rearranges behind a
+                // cart still on screen is a row the player watches shuffle itself.
+                self.rescan();
+            }
+            _ => {}
+        }
+    }
+
     /// How long this frame should take. A running game sets the pace — its core's fps is
     /// what its audio rate is derived from, and pacing to anything else makes the two
     /// disagree. With no game, the shelf redraws at 60 Hz.
     pub fn frame_time(&self) -> Duration {
+        // Only once the game is what is on screen. A cart on its way into the slot is a UI
+        // animation and runs at the panel's rate, even though the core behind it may already
+        // be loaded and declaring 59.7275 fps.
         match self.session.as_ref() {
-            Some(s) => s.frame_time(),
-            None => Duration::from_secs_f64(1.0 / 60.0),
+            Some(s) if self.screen == Screen::Playing => s.frame_time(),
+            _ => Duration::from_secs_f64(1.0 / 60.0),
         }
     }
 
@@ -230,6 +282,9 @@ impl App {
 
     /// Advance the game, if one is running. Called once per frame by the loop.
     pub fn run_frame(&mut self) {
+        if self.screen != Screen::Playing {
+            return;
+        }
         let held = self.held_game_buttons();
         let volume = self.volume;
         // L2 and R2 are the time controls. No platform here maps them to anything — a Mega
@@ -275,7 +330,6 @@ impl App {
                 self.session = Some(session);
                 self.pending_consumer = Some(consumer);
                 self.sink_request = Some(SinkRequest::Open);
-                self.screen = Screen::Playing;
             }
             Err(e) => eprintln!("slot2: cannot play {}: {e}", cart.title),
         }
@@ -302,12 +356,15 @@ impl App {
 
             (Screen::Playing, Action::Hold(Button::Menu)) => {
                 self.stop_session();
-                self.screen = Screen::List;
-                self.rescan();
+                self.screen = Screen::Ejecting;
+                self.anim = 0.0;
             }
 
-            (Screen::List, Action::Hold(Button::Menu))
-            | (Screen::Splash, Action::Hold(Button::Menu)) => {
+            // Not on `Inserting` or `Ejecting`. A menu hold takes about as long as the whole
+            // animation, so there is barely a moment to catch — and a power menu over a cart
+            // frozen in mid-air, which is what pausing an animation to open one looks like,
+            // is worse than nothing happening.
+            (Screen::List | Screen::Splash, Action::Hold(Button::Menu)) => {
                 self.screen = Screen::Power(PowerMenu::default());
             }
             (Screen::List, Action::Tap(b)) => match b {
@@ -315,7 +372,10 @@ impl App {
                 Button::Right => self.shelf_view.shelf.right(),
                 Button::L1 => self.switch_platform(-1),
                 Button::R1 => self.switch_platform(1),
-                Button::A => self.start_selected(),
+                Button::A if !self.carts.is_empty() => {
+                    self.screen = Screen::Inserting;
+                    self.anim = 0.0;
+                }
                 _ => {}
             },
 
@@ -351,7 +411,7 @@ impl App {
         if self.session.is_some() {
             Screen::Playing
         } else if self.carts.is_empty()
-            && self.screen == Screen::Power(PowerMenu::default())
+            && matches!(self.screen, Screen::Power(_))
             && self.card.root() == Path::new(".")
         {
             Screen::Splash
@@ -375,7 +435,14 @@ impl App {
                 let safe = ctx.safe;
                 self.shelf_view.draw(canvas, ctx, &safe, platform, &titles);
             }
-            Screen::Inserting | Screen::Ejecting => todo!(),
+            Screen::Inserting | Screen::Ejecting => {
+                let platform = self.platform();
+                let titles: Vec<&str> = self.carts.iter().map(|c| c.title.as_str()).collect();
+                let seat = self.insert_seat().unwrap_or(0.0);
+                let safe = ctx.safe;
+                self.shelf_view
+                    .draw_insert(canvas, ctx, &safe, platform, &titles, seat);
+            }
             Screen::Playing => {
                 if let Some(s) = self.session.as_mut() {
                     s.upload_video(canvas);
@@ -387,7 +454,7 @@ impl App {
                 if let Some(s) = self.session.as_mut() {
                     s.upload_video(canvas);
                     s.draw(canvas, ctx);
-                } else if self.screen != Screen::Splash && !self.carts.is_empty() {
+                } else if !self.carts.is_empty() {
                     let platform = self.platform();
                     let titles: Vec<&str> = self.carts.iter().map(|c| c.title.as_str()).collect();
                     let safe = ctx.safe;

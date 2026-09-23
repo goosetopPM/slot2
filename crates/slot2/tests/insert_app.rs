@@ -100,7 +100,10 @@ fn pressing_a_starts_the_insert_not_the_game() {
     tap(&mut a, Button::A, t);
 
     assert_eq!(a.screen, Screen::Inserting);
-    assert!(a.session().is_none(), "the core was loaded before the cart moved");
+    assert!(
+        a.session().is_none(),
+        "the core was loaded before the cart moved"
+    );
     let seat = a.insert_seat().expect("nothing is going into the slot");
     assert!(seat < 0.2, "the cart is already {seat} of the way in");
 }
@@ -203,7 +206,10 @@ fn a_stalled_frame_does_not_throw_the_cart_through_the_floor() {
         "one long frame swallowed the whole insert"
     );
     let seat = a.insert_seat().expect("the insert vanished");
-    assert!(seat < 0.2, "one long frame took the cart {seat} of the way in");
+    assert!(
+        seat < 0.2,
+        "one long frame took the cart {seat} of the way in"
+    );
 }
 
 // ------------------------------------------------------------------ refusal
@@ -216,28 +222,48 @@ fn a_core_that_will_not_load_sends_the_cart_back_out() {
     let t = Instant::now();
     tap(&mut a, Button::A, t);
 
-    let now = run(&mut a, t + Duration::from_millis(60), SEATED_AT + 0.05);
+    // Stop on the frame the refusal happens rather than a fixed distance past it, so what
+    // gets counted below is the whole eject and not the whole eject minus however many
+    // frames the run overshot by.
+    let mut now = t + Duration::from_millis(60);
+    for _ in 0..120 {
+        now += Duration::from_micros(16_667);
+        a.tick(now);
+        if a.screen != Screen::Inserting {
+            break;
+        }
+    }
     assert_eq!(a.screen, Screen::Ejecting, "the cart did not come back out");
     assert!(a.session().is_none());
 
     // And it comes out the way it went in, not by blinking back onto the row.
-    let mut now = now;
     let mut last = a.insert_seat().expect("nothing is coming out");
-    assert!(last > 0.8, "it started back out from {last}, not from the slot");
-    for i in 0..((EJECT_S * 60.0) as u32 - 2) {
+    assert!(
+        (last - 1.0).abs() < 1e-4,
+        "it started back out from {last}, not from the slot"
+    );
+    let mut frames = 0;
+    for _ in 0..120 {
         now += Duration::from_micros(16_667);
         a.tick(now);
-        let seat = a
-            .insert_seat()
-            .unwrap_or_else(|| panic!("frame {i}: the eject ended early"));
-        assert!(seat <= last + 1e-4, "frame {i}: the cart went back down");
+        let Some(seat) = a.insert_seat() else { break };
+        assert!(
+            seat <= last + 1e-4,
+            "frame {frames}: the cart went back down"
+        );
         last = seat;
+        frames += 1;
     }
+    // A whole eject, give or take the frame it ends on.
+    let want = (EJECT_S * 60.0) as u32;
+    assert!(
+        frames + 1 >= want && frames <= want + 1,
+        "the eject took {frames} frames, not {want}"
+    );
+    assert!(last < 0.1, "it stopped {last} of the way out");
 
-    let now = run(&mut a, now, 0.1);
     assert_eq!(a.screen, Screen::List, "the eject never reached the shelf");
     assert_eq!(a.insert_seat(), None);
-    let _ = now;
 }
 
 #[test]
@@ -316,7 +342,10 @@ fn the_screen_shows_the_cart_going_in() {
 
     a.draw(&mut canvas, &mut ctx, t);
     let start = lowest(&canvas);
-    assert!(start.is_finite(), "the first frame of an insert drew nothing");
+    assert!(
+        start.is_finite(),
+        "the first frame of an insert drew nothing"
+    );
 
     let now = run(&mut a, t + Duration::from_millis(60), SEATED_AT - 0.05);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
