@@ -54,14 +54,14 @@
 **목표**: 7개 플랫폼이 전부 실행되고, 플랫폼별 스케일·입력·지오메트리 변경이 처리된다.
 
 작업
-- [ ] `cores/{gpsp,fceumm,snes9x,genesis_plus_gx}` 빌드 스크립트 + 라이선스·소스 동봉 규칙
-- [ ] `registry`: PlatformDef 7종, 확장자 매핑, 코어 선택(기본/대안)
-- [ ] `quirks/{gpsp,fceumm,snes9x,gpgx}`: 옵션 프리셋, 입력 맵(SNES·MD 6버튼), 색보정(mGBA GB)
-- [ ] `SET_GEOMETRY`/`SET_SYSTEM_AV_INFO` 처리(MD 256↔320, SNES 하이레즈)
-- [ ] `ScalePolicy` 3모드 + 플랫폼×지오메트리 기본값, NES 오버스캔 크롭 옵션
+- [x] `cores/{fceumm,snes9x,genesis_plus_gx}` 빌드 스크립트 + 라이선스·소스 동봉 규칙 (gpSP는 GBA 대안 코어라 후순위)
+- [x] `registry`: PlatformDef 7종 + 원본 크기·표시 비율·오버스캔. 코어 선택은 게임별 ini로 (대안 코어 테이블은 gpSP와 함께)
+- [ ] `quirks/{gpsp,fceumm,snes9x,gpgx}`: 색보정(mGBA GB) — 옵션 프리셋과 입력 맵(SNES·MD 6버튼)은 registry에서 완료
+- [x] `SET_GEOMETRY`/`SET_SYSTEM_AV_INFO` 처리(MD 256↔320, SNES 하이레즈)
+- [x] `ScalePolicy` 3모드 + 플랫폼×지오메트리 기본값, NES 오버스캔 크롭 옵션
 - [ ] 되감기 링버퍼 플랫폼별 예산, 빨리감기
-- [ ] BIOS 감지(gb/gbc/gba/sms) + 부팅 로고 토글
-- [ ] 게임별 설정 파일(`System/games/<PLAT>/<stem>.ini`): 코어 선택
+- [x] BIOS 감지(gb/gbc/gba/md/sms) + 부팅 로고 토글
+- [x] 게임별 설정 파일(`System/games/<PLAT>/<stem>.ini`): 코어 선택·스케일·오버스캔
 
 **Acceptance**
 - RG SP에서 플랫폼당 1종 이상 풀스피드. MD 폭 전환·SNES 하이레즈 게임에서 화면 깨짐 없음.
