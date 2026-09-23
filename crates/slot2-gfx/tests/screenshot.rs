@@ -143,4 +143,43 @@ fn draws_rects_and_masks_where_asked() {
     );
     canvas.free(tex);
     canvas.free(tex2);
+
+    check_texture_rewrite(&mut canvas);
+}
+
+/// A phase of the GL test above rather than a test of its own: winit allows one event loop
+/// per process, so everything that needs a real context shares this one.
+///
+/// The game texture is rewritten every frame instead of being reallocated, so what
+/// glTexSubImage2D leaves behind is exactly what the player sees.
+fn check_texture_rewrite(canvas: &mut GlCanvas) {
+    let red = [255u8, 0, 0, 255].repeat(4);
+    let tex = canvas.upload_rgba8(2, 2, &red);
+    canvas.clear(Color::from_u8(0, 0, 0, 255));
+    canvas.image(tex, 0.0, 0.0, 64.0, 64.0, Color::WHITE);
+    let img = canvas.read_back();
+    assert!(
+        near(img.pixel(32, 32), [255, 0, 0, 255], 4),
+        "expected red, got {:?}",
+        img.pixel(32, 32)
+    );
+
+    let blue = [0u8, 0, 255, 255].repeat(4);
+    assert!(
+        canvas.update_rgba8(tex, 2, 2, &blue),
+        "a same-size rewrite must be accepted"
+    );
+    canvas.clear(Color::from_u8(0, 0, 0, 255));
+    canvas.image(tex, 0.0, 0.0, 64.0, 64.0, Color::WHITE);
+    let img = canvas.read_back();
+    assert!(
+        near(img.pixel(32, 32), [0, 0, 255, 255], 4),
+        "expected blue after the rewrite, got {:?}",
+        img.pixel(32, 32)
+    );
+
+    // A different size is a different allocation, and must be refused rather than quietly
+    // stretched into the old one.
+    assert!(!canvas.update_rgba8(tex, 4, 4, &[0u8; 4 * 4 * 4]));
+    canvas.free(tex);
 }

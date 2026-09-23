@@ -306,3 +306,57 @@ fn the_picture_lands_where_the_scale_policy_says() {
         .expect("the game was not drawn");
     assert_eq!((x, y, w, h), (0.0, 0.0, 640.0, 480.0));
 }
+
+#[test]
+fn a_steady_frame_size_rewrites_the_texture_instead_of_reallocating_it() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("tex");
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+
+    let vol = slot2_audio::Volume::new(100);
+    let mut canvas = slot2_gfx::RecordingCanvas::new(720, 480);
+
+    // The first frame has to allocate; after that the size does not change, and a frontend
+    // that frees and reallocates the game texture sixty times a second is asking the
+    // driver for a new allocation sixty times a second.
+    for _ in 0..12 {
+        s.run_frame(&[], &vol);
+        s.upload_video(&mut canvas);
+    }
+
+    let uploads = canvas
+        .ops
+        .iter()
+        .filter(|op| matches!(op, slot2_gfx::Op::UploadRgba8 { .. }))
+        .count();
+    let updates = canvas
+        .ops
+        .iter()
+        .filter(|op| matches!(op, slot2_gfx::Op::UpdateRgba8 { .. }))
+        .count();
+    let frees = canvas
+        .ops
+        .iter()
+        .filter(|op| matches!(op, slot2_gfx::Op::Free(_)))
+        .count();
+
+    assert_eq!(uploads, 1, "the texture was reallocated {uploads} times");
+    assert_eq!(frees, 0, "the texture was freed mid-play");
+    assert!(updates >= 10, "only {updates} frames reached the texture");
+}
+
+#[test]
+fn a_canvas_refuses_to_rewrite_a_texture_at_a_different_size() {
+    // What makes the reuse above safe: a geometry change cannot be smuggled into an
+    // existing allocation, so the session falls back to a fresh upload.
+    use slot2_gfx::Canvas as _;
+    let mut canvas = slot2_gfx::RecordingCanvas::new(720, 480);
+    let big = [0u8; 320 * 224 * 4];
+    let small = [1u8; 256 * 224 * 4];
+    let tex = canvas.upload_rgba8(320, 224, &big);
+    assert!(canvas.update_rgba8(tex, 320, 224, &big));
+    assert!(!canvas.update_rgba8(tex, 256, 224, &small));
+    canvas.free(tex);
+    assert!(!canvas.update_rgba8(tex, 320, 224, &big));
+}

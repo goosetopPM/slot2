@@ -285,14 +285,23 @@ impl Session {
 
     /// Upload the newest picture if there is one. Call before `draw`.
     pub fn upload_video(&mut self, canvas: &mut dyn Canvas) {
-        if self.video_dirty {
+        if !self.video_dirty {
+            return;
+        }
+        let (w, h) = (self.last_width, self.last_height);
+        // The usual case is the same frame size as last time, which is a rewrite of the
+        // pixels rather than a new texture. Only a geometry change — a Mega Drive going
+        // from 256 to 320 across, a SNES screen turning hi-res — reallocates.
+        let rewritten = self
+            .tex_id
+            .is_some_and(|tex| canvas.update_rgba8(tex, w, h, &self.video_buffer));
+        if !rewritten {
             if let Some(tex) = self.tex_id {
                 canvas.free(tex);
             }
-            self.tex_id =
-                Some(canvas.upload_rgba8(self.last_width, self.last_height, &self.video_buffer));
-            self.video_dirty = false;
+            self.tex_id = Some(canvas.upload_rgba8(w, h, &self.video_buffer));
         }
+        self.video_dirty = false;
     }
 
     /// Draw the game, integer-scaled and centred on the panel.

@@ -56,7 +56,9 @@ pub struct GlCanvas {
     vbo: gl::types::GLuint,
     batch_tex: TexId,
     vertices: Vec<Vertex>,
-    textures: HashMap<TexId, gl::types::GLuint>,
+    /// GL name and the size it was allocated at; the size is what lets `update_rgba8`
+    /// tell a rewrite from a resize.
+    textures: HashMap<TexId, (gl::types::GLuint, u32, u32)>,
     next_tex_id: u32,
 }
 
@@ -202,7 +204,7 @@ impl GlCanvas {
         if self.vertices.is_empty() {
             return;
         }
-        let tex = *self.textures.get(&self.batch_tex).unwrap_or(&0);
+        let tex = self.textures.get(&self.batch_tex).map_or(0, |t| t.0);
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
@@ -369,7 +371,7 @@ impl Canvas for GlCanvas {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
         }
-        self.textures.insert(id, tex);
+        self.textures.insert(id, (tex, w, h));
         id
     }
     fn upload_alpha8(&mut self, w: u32, h: u32, data: &[u8]) -> TexId {
@@ -382,8 +384,38 @@ impl Canvas for GlCanvas {
         }
         self.upload_rgba8(w, h, &rgba)
     }
+    fn update_rgba8(&mut self, tex: TexId, w: u32, h: u32, data: &[u8]) -> bool {
+        let Some(&(name, tw, th)) = self.textures.get(&tex) else {
+            return false;
+        };
+        if (tw, th) != (w, h) {
+            return false;
+        }
+        // Anything already queued against this texture was queued to draw the old pixels;
+        // let it, before they are gone.
+        if self.batch_tex == tex {
+            self.flush();
+        }
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, name);
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+            gl::TexSubImage2D(
+                gl::TEXTURE_2D,
+                0,
+                0,
+                0,
+                w as i32,
+                h as i32,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                data.as_ptr() as *const _,
+            );
+        }
+        true
+    }
+
     fn free(&mut self, tex: TexId) {
-        if let Some(t) = self.textures.remove(&tex) {
+        if let Some((t, _, _)) = self.textures.remove(&tex) {
             if self.batch_tex == tex {
                 self.flush();
             }
@@ -457,7 +489,7 @@ impl Drop for GlCanvas {
         unsafe {
             gl::DeleteFramebuffers(1, &self.fbo);
             gl::DeleteTextures(1, &self.fbo_tex);
-            for (_, t) in self.textures.drain() {
+            for (_, (t, _, _)) in self.textures.drain() {
                 gl::DeleteTextures(1, &t);
             }
             gl::DeleteBuffers(1, &self.vbo);

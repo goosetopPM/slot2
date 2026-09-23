@@ -82,6 +82,20 @@ pub trait Canvas {
     /// upload. `data.len()` must be `w * h`.
     fn upload_alpha8(&mut self, w: u32, h: u32, data: &[u8]) -> TexId;
 
+    /// Replace the pixels of a texture that already exists, keeping its id and its storage.
+    ///
+    /// Returns false when the id is unknown or `w`/`h` differ from what it was created
+    /// with, so the caller can fall back to `upload_rgba8`. A canvas that cannot do this
+    /// says so by returning false and costs the caller nothing but the fallback.
+    ///
+    /// This exists for the game texture, which is rewritten sixty times a second. Freeing
+    /// and reallocating it every frame asks the driver for a new allocation sixty times a
+    /// second, which on the device's Mali is worth avoiding.
+    fn update_rgba8(&mut self, tex: TexId, w: u32, h: u32, data: &[u8]) -> bool {
+        let _ = (tex, w, h, data);
+        false
+    }
+
     /// Release a texture. Using the id afterwards is a logic error (drawn as nothing).
     fn free(&mut self, tex: TexId);
 
@@ -111,6 +125,11 @@ pub enum Op {
         w: u32,
         h: u32,
     },
+    UpdateRgba8 {
+        id: TexId,
+        w: u32,
+        h: u32,
+    },
     Free(TexId),
     Rect {
         x: f32,
@@ -135,6 +154,9 @@ pub enum Op {
 pub struct RecordingCanvas {
     size: (u32, u32),
     next: u32,
+    /// What each texture was uploaded at, so `update_rgba8` can refuse a size change the
+    /// way a real canvas does.
+    sizes: std::collections::HashMap<TexId, (u32, u32)>,
     pub ops: Vec<Op>,
 }
 
@@ -143,6 +165,7 @@ impl RecordingCanvas {
         RecordingCanvas {
             size: (w, h),
             next: 1,
+            sizes: std::collections::HashMap::new(),
             ops: Vec::new(),
         }
     }
@@ -171,6 +194,7 @@ impl Canvas for RecordingCanvas {
         assert_eq!(data.len(), (w * h * 4) as usize, "rgba8 upload size");
         let id = TexId(self.next);
         self.next += 1;
+        self.sizes.insert(id, (w, h));
         self.ops.push(Op::UploadRgba8 { id, w, h });
         id
     }
@@ -179,11 +203,22 @@ impl Canvas for RecordingCanvas {
         assert_eq!(data.len(), (w * h) as usize, "alpha8 upload size");
         let id = TexId(self.next);
         self.next += 1;
+        self.sizes.insert(id, (w, h));
         self.ops.push(Op::UploadAlpha8 { id, w, h });
         id
     }
 
+    fn update_rgba8(&mut self, tex: TexId, w: u32, h: u32, data: &[u8]) -> bool {
+        if self.sizes.get(&tex) != Some(&(w, h)) {
+            return false;
+        }
+        assert_eq!(data.len(), (w * h * 4) as usize, "rgba8 update size");
+        self.ops.push(Op::UpdateRgba8 { id: tex, w, h });
+        true
+    }
+
     fn free(&mut self, tex: TexId) {
+        self.sizes.remove(&tex);
         self.ops.push(Op::Free(tex));
     }
 
