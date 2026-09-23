@@ -207,8 +207,9 @@ pub fn def(platform: Platform) -> &'static PlatformDef {
 /// `None` when the platform has no such button (a Game Boy has no X or Y).
 ///
 /// The frontend's face buttons are laid out like a modern pad (A right, B below, X top,
-/// Y left); libretro's ids follow the SNES layout. For the Game Boy family only A and B
-/// exist; for the Mega Drive, the frontend's Y/X/A row maps to the core's A/B/C.
+/// Y left), which is also the SNES layout libretro's ids are named after, so the SNES maps
+/// straight through. For the Game Boy family only A and B exist. The Mega Drive is the one
+/// that needs thinking about; see the arm below.
 pub fn joypad_bit(platform: Platform, button: LogicalButton) -> Option<u16> {
     use JoypadMask as M;
     use LogicalButton as B;
@@ -250,9 +251,23 @@ pub fn joypad_bit(platform: Platform, button: LogicalButton) -> Option<u16> {
         (Platform::Gba | Platform::Snes, B::L1) => Some(M::L),
         (Platform::Gba | Platform::Snes, B::R1) => Some(M::R),
 
-        (Platform::Md, B::Y) => Some(M::Y), // MD A
-        (Platform::Md, B::X) => Some(M::B), // MD B
-        (Platform::Md, B::A) => Some(M::A), // MD C
+        // A Mega Drive pad, all six buttons of it. Genesis Plus GX reads the bottom row
+        // A/B/C off libretro's Y/B/A and the top row X/Y/Z off L/X/R, with Select as Mode
+        // (libretro.c, `_polled_input`). Laid over this handheld's diamond that puts MD
+        // A/B/C on the left, bottom and right buttons — the arc a thumb sweeps — and MD
+        // X/Y/Z on the shoulder, top, shoulder above them.
+        //
+        // The extra three are always mapped and cost nothing when unused: the core is
+        // handed a plain RETRO_DEVICE_JOYPAD, which makes it read the cartridge's own I/O
+        // support field and give a 3-button game a 3-button pad. Forcing six on a game
+        // that predates them is how a 3-button game ends up not reading its pad at all.
+        (Platform::Md, B::Y) => Some(M::Y),           // MD A
+        (Platform::Md, B::B) => Some(M::B),           // MD B
+        (Platform::Md, B::A) => Some(M::A),           // MD C
+        (Platform::Md, B::L1) => Some(M::L),          // MD X
+        (Platform::Md, B::X) => Some(M::X),           // MD Y
+        (Platform::Md, B::R1) => Some(M::R),          // MD Z
+        (Platform::Md, B::Select) => Some(M::SELECT), // Mode
 
         _ => None,
     }

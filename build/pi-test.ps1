@@ -47,7 +47,9 @@ if ($Setup) {
     # this machine and nowhere else. The tests that want one skip when it is absent.
     ssh $Pi "mkdir -p $remote/assets/test"
     scp -r assets/fonts assets/lang "${Pi}:$remote/assets/"
-    $testFiles = Get-ChildItem assets/test -File
+    # .FullName, not the objects: scp gets their bare names otherwise and looks for them in
+    # the current directory.
+    $testFiles = Get-ChildItem assets/test -File | ForEach-Object { $_.FullName }
     if ($testFiles) { scp $testFiles "${Pi}:$remote/assets/test/" }
     $so = Get-ChildItem vendor\*_libretro.so -ErrorAction SilentlyContinue
     if ($so) { scp $so "${Pi}:$remote/vendor/" }

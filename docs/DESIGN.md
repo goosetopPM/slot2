@@ -268,6 +268,8 @@ face 래스터 → 텍스처
 - host: winit 키보드 + gilrs 게임패드.
 - 제스처 계층: hold(MENU 꺼내기), double-tap(MENU 스테이트 스위처, R2 빨리감기 고정), chord(SELECT+R1 등). 원본 `gesture.rs` 이식.
 - 플랫폼별 논리 버튼 맵은 registry/quirks 소유(SNES 6버튼, MD 6버튼 등).
+  - MD는 코어에게 평범한 `RETRO_DEVICE_JOYPAD`를 넘긴다. Genesis Plus GX는 그때 카트리지의 I/O 지원 필드를 읽어 **3버튼 게임에는 3버튼 패드를** 준다. 6버튼을 강제하면 6버튼을 모르는 게임이 패드를 아예 못 읽는 사고가 난다. 우리 쪽은 여섯 개를 전부 매핑해 두고, 쓰이지 않는 셋은 비용이 0이다.
+  - MD 바닥줄 A/B/C는 libretro의 Y/B/A, 윗줄 X/Y/Z는 L/X/R, Mode는 Select(코어 `libretro.c`). 기기 다이아몬드 배치에 얹으면 A/B/C가 왼쪽·아래·오른쪽(엄지가 훑는 호), X/Y/Z가 L1·위·R1이 된다.
 
 ---
 

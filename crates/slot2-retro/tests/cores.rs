@@ -297,3 +297,38 @@ fn every_core_round_trips_a_save_state() {
         );
     }
 }
+
+#[test]
+fn every_mapped_button_reaches_every_core() {
+    let _serial = serial();
+    use slot2_retro::LogicalButton as B;
+    const BUTTONS: [B; 14] = [
+        B::A, B::B, B::X, B::Y, B::L1, B::R1, B::L2, B::R2,
+        B::Select, B::Start, B::Up, B::Down, B::Left, B::Right,
+    ];
+    for p in ALL {
+        let Some(mut core) = load(p) else { continue };
+
+        // Every button at once, then each on its own. A core that mishandles an id it was
+        // never going to receive crashes here rather than in someone's hands.
+        let all = slot2_retro::mask_for(p, BUTTONS);
+        core.set_input(0, all);
+        for _ in 0..3 {
+            core.run();
+        }
+        for b in BUTTONS {
+            core.set_input(0, slot2_retro::mask_for(p, [b]));
+            core.run();
+        }
+        assert!(core.frame().is_some(), "{}: stopped drawing", name(p));
+
+        // And the mask really is the union of the parts, not the last one written.
+        let mut expected = 0u16;
+        for b in BUTTONS {
+            if let Some(bit) = slot2_retro::joypad_bit(p, b) {
+                expected |= bit;
+            }
+        }
+        assert_eq!(all.0, expected, "{}: mask lost a button", name(p));
+    }
+}

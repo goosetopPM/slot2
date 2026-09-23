@@ -73,15 +73,47 @@ fn nes_has_two_buttons_and_snes_has_six() {
 }
 
 #[test]
-fn mega_drive_three_button_row_maps_to_a_b_c() {
-    // The frontend's Y X A row is the Mega Drive's A B C: libretro uses Y, B, A for those.
+fn a_mega_drive_pad_has_all_six_buttons() {
+    // Genesis Plus GX reads the bottom row A/B/C off libretro's Y/B/A and the top row
+    // X/Y/Z off L/X/R. On this handheld's diamond that is left/bottom/right for A/B/C —
+    // the arc a thumb sweeps — and L1/top/R1 for X/Y/Z.
     assert_eq!(joypad_bit(Platform::Md, B::Y), Some(JoypadMask::Y));
-    assert_eq!(joypad_bit(Platform::Md, B::X), Some(JoypadMask::B));
+    assert_eq!(joypad_bit(Platform::Md, B::B), Some(JoypadMask::B));
     assert_eq!(joypad_bit(Platform::Md, B::A), Some(JoypadMask::A));
+    assert_eq!(joypad_bit(Platform::Md, B::L1), Some(JoypadMask::L));
+    assert_eq!(joypad_bit(Platform::Md, B::X), Some(JoypadMask::X));
+    assert_eq!(joypad_bit(Platform::Md, B::R1), Some(JoypadMask::R));
+    assert_eq!(joypad_bit(Platform::Md, B::Select), Some(JoypadMask::SELECT));
     assert_eq!(joypad_bit(Platform::Md, B::Start), Some(JoypadMask::START));
+
+    // Every one of the eight is a different bit: a mapping that doubles up silently makes
+    // two buttons one.
+    let mut seen = std::collections::HashSet::new();
+    for b in [B::Y, B::B, B::A, B::L1, B::X, B::R1, B::Select, B::Start] {
+        let bit = joypad_bit(Platform::Md, b).expect("mapped");
+        assert!(seen.insert(bit), "{b:?} shares a bit with something else");
+    }
+
+    // The Master System had two, and its Pause is on the console, which the core reads as
+    // Start.
     assert_eq!(joypad_bit(Platform::Sms, B::A), Some(JoypadMask::A));
     assert_eq!(joypad_bit(Platform::Sms, B::B), Some(JoypadMask::B));
+    assert_eq!(joypad_bit(Platform::Sms, B::Start), Some(JoypadMask::START));
+    assert_eq!(joypad_bit(Platform::Sms, B::X), None);
 }
+
+#[test]
+fn nothing_on_the_face_of_the_handheld_goes_nowhere_on_a_mega_drive() {
+    // The bug this replaces: the bottom button, the one a thumb rests on, was mapped to
+    // nothing at all while the top button stood in for it.
+    for b in [B::A, B::B, B::X, B::Y] {
+        assert!(
+            joypad_bit(Platform::Md, b).is_some(),
+            "{b:?} does nothing on a Mega Drive"
+        );
+    }
+}
+
 
 #[test]
 fn masks_combine_and_ignore_unmapped_buttons() {
