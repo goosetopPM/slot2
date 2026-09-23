@@ -54,6 +54,61 @@ impl Core {
     }
 }
 
+/// The shape a console's picture is meant to have, which is not always the shape of the
+/// pixel buffer it hands over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aspect {
+    /// Square pixels: the frame's own proportions are already right.
+    Square,
+    /// Each source pixel is `num:den` wide. A NES pixel is 8:7 — 256×240 was meant to look
+    /// slightly wider than it measures.
+    Pixel { num: u32, den: u32 },
+    /// The console always filled a fixed shape whatever the frame size. A Mega Drive
+    /// switches between 256 and 320 pixels across and both filled the same 4:3 screen, so
+    /// its pixel ratio is not a constant and a fixed display ratio is the honest model.
+    Display { num: u32, den: u32 },
+}
+
+impl Aspect {
+    /// The ratio this frame should be displayed at. Not reduced — a ratio is all the
+    /// caller needs, and reducing it would only lose precision.
+    pub fn display(self, frame: (u32, u32)) -> (u32, u32) {
+        match self {
+            Aspect::Square => frame,
+            Aspect::Pixel { num, den } => (frame.0 * num, frame.1 * den),
+            Aspect::Display { num, den } => (num, den),
+        }
+    }
+}
+
+/// Source rows and columns a television never showed. Cropping them is optional: some games
+/// draw to the edge and some leave garbage there, so this is a default, not a rule.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Overscan {
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+}
+
+impl Overscan {
+    pub const NONE: Overscan = Overscan {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    /// The same amount off the top and the bottom.
+    pub const fn rows(n: u32) -> Overscan {
+        Overscan {
+            left: 0,
+            top: n,
+            right: 0,
+            bottom: n,
+        }
+    }
+}
+
 /// One platform's entry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformDef {
@@ -63,6 +118,13 @@ pub struct PlatformDef {
     pub options: &'static [(&'static str, &'static str)],
     /// Optional BIOS files this platform can use, looked for in `BIOS/`.
     pub bios: &'static [&'static str],
+    /// The frame size this console usually produces. Cores report their own size and may
+    /// change it mid-game, so this is for laying out a shelf before a core has run, never
+    /// a substitute for `av_info()`.
+    pub native: (u32, u32),
+    pub aspect: Aspect,
+    /// What to crop by default. Only the NES asks for any.
+    pub overscan: Overscan,
 }
 
 /// mGBA plays the three Game Boy platforms; the rest have one core each (M2 adds gpSP as a
@@ -74,42 +136,63 @@ pub const PLATFORMS: &[PlatformDef] = &[
         default_core: Core::Mgba,
         options: &[("mgba_skip_bios", "ON")],
         bios: &["gb_bios.bin"],
+        native: (160, 144),
+        aspect: Aspect::Square,
+        overscan: Overscan::NONE,
     },
     PlatformDef {
         platform: Platform::Gbc,
         default_core: Core::Mgba,
         options: &[("mgba_skip_bios", "ON")],
         bios: &["gbc_bios.bin"],
+        native: (160, 144),
+        aspect: Aspect::Square,
+        overscan: Overscan::NONE,
     },
     PlatformDef {
         platform: Platform::Gba,
         default_core: Core::Mgba,
         options: &[("mgba_skip_bios", "ON")],
         bios: &["gba_bios.bin"],
+        native: (240, 160),
+        aspect: Aspect::Square,
+        overscan: Overscan::NONE,
     },
     PlatformDef {
         platform: Platform::Nes,
         default_core: Core::Fceumm,
         options: &[],
         bios: &[],
+        native: (256, 240),
+        aspect: Aspect::Pixel { num: 8, den: 7 },
+        overscan: Overscan::rows(8),
     },
     PlatformDef {
         platform: Platform::Snes,
         default_core: Core::Snes9x,
         options: &[],
         bios: &[],
+        native: (256, 224),
+        aspect: Aspect::Pixel { num: 8, den: 7 },
+        overscan: Overscan::NONE,
     },
     PlatformDef {
         platform: Platform::Md,
         default_core: Core::GenesisPlusGx,
         options: &[],
         bios: &[],
+        native: (320, 224),
+        aspect: Aspect::Display { num: 4, den: 3 },
+        overscan: Overscan::NONE,
     },
     PlatformDef {
         platform: Platform::Sms,
         default_core: Core::GenesisPlusGx,
         options: &[],
         bios: &["bios_U.sms", "bios_E.sms", "bios_J.sms"],
+        native: (256, 192),
+        aspect: Aspect::Pixel { num: 8, den: 7 },
+        overscan: Overscan::NONE,
     },
 ];
 

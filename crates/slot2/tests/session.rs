@@ -43,6 +43,16 @@ fn core_dir() -> Option<PathBuf> {
     }
 }
 
+/// A context just real enough for `draw`, which only wants somewhere to measure text.
+fn ui_ctx() -> slot2_ui::UiCtx {
+    slot2_ui::UiCtx::new(
+        slot2_platform::detect().profile,
+        "en",
+        Vec::new(),
+        None,
+    )
+}
+
 /// A card with the test ROM copied in as a GBA cart.
 fn card_with_rom(name: &str) -> (Card, Cart, PathBuf) {
     let root = std::env::temp_dir().join(format!("slot2-session-{}-{name}", std::process::id()));
@@ -249,3 +259,50 @@ fn a_session_paces_and_produces_audio_at_the_sink_rate() {
     assert_eq!(dropped, 0, "a drained ring must never drop");
 }
 
+
+#[test]
+fn the_picture_lands_where_the_scale_policy_says() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("scale");
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+
+    let vol = slot2_audio::Volume::new(100);
+    for _ in 0..4 {
+        s.run_frame(&[], &vol);
+    }
+
+    // A GBA frame is 240x160 with square pixels, so on a 720x480 panel Integer is an exact
+    // 3x with nothing left over — the case the design table calls out in bold.
+    let mut canvas = slot2_gfx::RecordingCanvas::new(720, 480);
+    let ctx = ui_ctx();
+    s.upload_video(&mut canvas);
+    s.draw(&mut canvas, &ctx);
+
+    let image = canvas
+        .frame()
+        .iter()
+        .find_map(|op| match op {
+            slot2_gfx::Op::Image { x, y, w, h, uv, .. } => Some((*x, *y, *w, *h, *uv)),
+            _ => None,
+        })
+        .expect("the game was not drawn");
+    assert_eq!((image.0, image.1, image.2, image.3), (0.0, 0.0, 720.0, 480.0));
+    assert_eq!(image.4, [0.0, 0.0, 1.0, 1.0], "a GBA has no overscan to crop");
+
+    // Fill takes the panel whatever the frame is; on this one it happens to agree with
+    // Integer, so ask a geometry where it cannot.
+    let mut canvas = slot2_gfx::RecordingCanvas::new(640, 480);
+    s.set_scale(slot2_gfx::ScalePolicy::Fill);
+    s.upload_video(&mut canvas);
+    s.draw(&mut canvas, &ctx);
+    let (x, y, w, h) = canvas
+        .frame()
+        .iter()
+        .find_map(|op| match op {
+            slot2_gfx::Op::Image { x, y, w, h, .. } => Some((*x, *y, *w, *h)),
+            _ => None,
+        })
+        .expect("the game was not drawn");
+    assert_eq!((x, y, w, h), (0.0, 0.0, 640.0, 480.0));
+}

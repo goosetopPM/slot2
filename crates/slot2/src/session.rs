@@ -98,6 +98,10 @@ impl From<slot2_store::Error> for Error {
 pub struct Session {
     cart: Cart,
     core: Core,
+    retro_platform: slot2_retro::Platform,
+    aspect: slot2_retro::Aspect,
+    overscan: slot2_retro::Overscan,
+    scale: slot2_gfx::ScalePolicy,
     producer: Producer,
     resampler: Resampler,
     frame_time: Duration,
@@ -178,6 +182,10 @@ impl Session {
         let session = Session {
             cart: cart.clone(),
             core,
+            retro_platform,
+            aspect: def.aspect,
+            overscan: def.overscan,
+            scale: slot2_gfx::ScalePolicy::default(),
             producer,
             resampler,
             frame_time: frame_time_for(av.fps),
@@ -290,20 +298,46 @@ impl Session {
     /// Draw the game, integer-scaled and centred on the panel.
     pub fn draw(&self, canvas: &mut dyn Canvas, ctx: &UiCtx) {
         let _ = ctx;
-        if let Some(tex) = self.tex_id {
-            let (pw, ph) = canvas.size();
-            let sw = self.last_width as f32;
-            let sh = self.last_height as f32;
+        let Some(tex) = self.tex_id else { return };
 
-            let scale = (pw as f32 / sw).min(ph as f32 / sh).floor().max(1.0);
-            let dw = sw * scale;
-            let dh = sh * scale;
-            let dx = (pw as f32 - dw) / 2.0;
-            let dy = (ph as f32 - dh) / 2.0;
+        let src = (self.last_width, self.last_height);
+        let o = self.overscan;
+        // Everything downstream works on the visible picture, not the buffer: a cropped NES
+        // frame is 256×224, and both the placement and its aspect have to agree about that.
+        let shown = slot2_gfx::cropped_size(src, o.left, o.top, o.right, o.bottom);
+        let aspect = self.aspect.display(shown);
+        let r = slot2_gfx::place(self.scale, shown, aspect, canvas.size());
+        let uv = slot2_gfx::sub_uv(src, o.left, o.top, o.right, o.bottom);
 
-            canvas.clear(slot2_gfx::Color::BLACK);
-            canvas.image(tex, dx, dy, dw, dh, slot2_gfx::Color::WHITE);
-        }
+        canvas.clear(slot2_gfx::Color::BLACK);
+        canvas.image_uv(
+            tex,
+            r.x as f32,
+            r.y as f32,
+            r.w as f32,
+            r.h as f32,
+            uv,
+            slot2_gfx::Color::WHITE,
+        );
+    }
+
+    /// How the picture is laid on the panel, and what is cropped off it first.
+    pub fn scale(&self) -> slot2_gfx::ScalePolicy {
+        self.scale
+    }
+
+    pub fn set_scale(&mut self, policy: slot2_gfx::ScalePolicy) {
+        self.scale = policy;
+    }
+
+    /// Turn the platform's default overscan crop on or off. Off is the safe answer for a
+    /// game that draws to the edge; on hides the rubbish a television never showed.
+    pub fn set_overscan(&mut self, crop: bool) {
+        self.overscan = if crop {
+            slot2_retro::def(self.retro_platform).overscan
+        } else {
+            slot2_retro::Overscan::NONE
+        };
     }
 
     /// The last frame as RGBA8 with its size, for thumbnails and tests.

@@ -117,7 +117,11 @@ struct DeviceProfile {
 | MD | 320×224 / 256×224 | 4:3 맞춤 | 2× | 2× | 2× |
 | SMS | 256×192 | 8:7 | 2× | 2× | 2× |
 
-**지오메트리 변경**: `SET_GEOMETRY` / `SET_SYSTEM_AV_INFO` 콜백 시 텍스처 재할당·배치 재계산 (MD 폭 전환, SNES 하이레즈).
+위 배율표는 어디에도 저장하지 않는다. 플랫폼의 원본 크기와 패널 크기로부터 `ScalePolicy::Integer`가 계산해 내는 값이고, 표 자체는 `crates/slot2/tests/scaling.rs`가 실행 가능한 형태로 들고 있다. 설계와 코드가 서로 모르게 어긋나는 것을 막는 장치다.
+
+PAR은 플랫폼 상수가 아니다. MD는 256·320 두 폭을 오가면서 둘 다 같은 4:3 화면을 채웠으므로, 픽셀 비율이 아니라 **표시 비율**로 모델링한다(`Aspect::Display`). 덕분에 폭이 바뀌어도 화면이 튀지 않는다 — 이것이 M2 수용 기준 "MD 폭 전환에서 화면 깨짐 없음"의 기하학적 알맹이다. NES·SNES·SMS는 8:7 픽셀(`Aspect::Pixel`), GB 계열과 GBA는 정사각(`Aspect::Square`).
+
+**지오메트리 변경**: `SET_GEOMETRY` / `SET_SYSTEM_AV_INFO` 콜백 시 텍스처 재할당·배치 재계산 (MD 폭 전환, SNES 하이레즈). 배치는 매 프레임 코어가 보고한 크기에서 다시 계산하므로 별도 처리가 필요 없고, 텍스처는 크기가 달라진 프레임에서 재할당된다.
 
 **셰이더 프리셋**: `None`, `SharpBilinear`, `Lcd3x`(휴대기 기본), `ZfastCrt`(거치기 기본), `Scanline`. GLSL ES 단일 패스. 표준 uniform: `TextureSize`, `InputSize`, `OutputSize`, `FrameCount` — 후일 `.glslp` 호환의 기반.
 
