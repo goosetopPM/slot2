@@ -361,3 +361,62 @@ fn a_canvas_refuses_to_rewrite_a_texture_at_a_different_size() {
     canvas.free(tex);
     assert!(!canvas.update_rgba8(tex, 320, 224, &big));
 }
+
+#[test]
+fn a_settings_file_changes_how_the_game_is_drawn() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("settings");
+
+    // A GBA frame is an exact 3x on this panel under Integer, so Fill is visibly different:
+    // it takes the whole 640-wide panel where Integer would leave bars.
+    card.write_settings(
+        &cart,
+        &slot2_store::GameSettings {
+            scale: Some(slot2_store::ScaleMode::Fill),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let (mut s, _c) = Session::start(&card, &cart, &cores, 48_000).unwrap();
+    assert_eq!(s.scale(), slot2_gfx::ScalePolicy::Fill);
+
+    let vol = slot2_audio::Volume::new(100);
+    for _ in 0..4 {
+        s.run_frame(&[], &vol);
+    }
+    let mut canvas = slot2_gfx::RecordingCanvas::new(640, 480);
+    let ctx = ui_ctx();
+    s.upload_video(&mut canvas);
+    s.draw(&mut canvas, &ctx);
+    let (w, h) = canvas
+        .frame()
+        .iter()
+        .find_map(|op| match op {
+            slot2_gfx::Op::Image { w, h, .. } => Some((*w, *h)),
+            _ => None,
+        })
+        .expect("the game was not drawn");
+    assert_eq!((w, h), (640.0, 480.0), "the scale setting was ignored");
+}
+
+#[test]
+fn a_core_that_is_not_on_the_card_falls_back_instead_of_failing() {
+    let _serial = serial();
+    let Some(cores) = core_dir() else { return };
+    let (card, cart, _root) = card_with_rom("badcore");
+    card.write_settings(
+        &cart,
+        &slot2_store::GameSettings {
+            core: Some("a_core_nobody_has".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // A setting is allowed to be wrong. It is not allowed to make a game unlaunchable.
+    let (s, _c) = Session::start(&card, &cart, &cores, 48_000)
+        .expect("a bad core name must fall back, not refuse");
+    assert_eq!(s.cart().stem, "arm");
+}

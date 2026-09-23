@@ -147,7 +147,10 @@ fn a_bios_on_the_card_turns_the_real_boot_sequence_on() {
 
     // Genesis Plus GX will not touch a boot ROM unless it is told to.
     for p in [Platform::Md, Platform::Sms] {
-        assert_eq!(find(&options_for(p, true), "genesis_plus_gx_bios"), "enabled");
+        assert_eq!(
+            find(&options_for(p, true), "genesis_plus_gx_bios"),
+            "enabled"
+        );
         assert_eq!(
             find(&options_for(p, false), "genesis_plus_gx_bios"),
             "disabled"

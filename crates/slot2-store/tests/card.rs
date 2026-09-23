@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use slot2_store::{atomic_write, Card, Cart, Ini, Platform, StateKind, Thumb};
+use slot2_store::{
+    atomic_write, Card, Cart, GameSettings, Ini, Platform, ScaleMode, StateKind, Thumb,
+};
 
 fn tempdir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("slot2-store-{}-{name}", std::process::id()));
@@ -244,4 +246,124 @@ fn ini_load_and_save() {
         fs::read_to_string(&p).unwrap(),
         "brightness = 70\nlang = ko\n"
     );
+}
+
+// --- per-game settings -------------------------------------------------------------------
+
+fn tmp_card(name: &str) -> (Card, PathBuf) {
+    let d = tempdir(name);
+    let card = Card::new(&d);
+    card.ensure_layout();
+    (card, d)
+}
+
+fn a_cart(card: &Card) -> Cart {
+    cart(card, Platform::Nes, "Mappy", "nes")
+}
+
+#[test]
+fn a_game_with_no_settings_file_has_no_settings() {
+    let (card, _d) = tmp_card("nosettings");
+    let cart = a_cart(&card);
+    assert_eq!(card.read_settings(&cart), GameSettings::default());
+    assert!(!card.game_settings_path(&cart).exists());
+}
+
+#[test]
+fn settings_round_trip_and_land_where_the_design_says() {
+    let (card, d) = tmp_card("settings");
+    let cart = a_cart(&card);
+
+    let want = GameSettings {
+        core: Some("mgba_libretro".into()),
+        scale: Some(ScaleMode::AspectFit),
+        overscan: Some(false),
+    };
+    card.write_settings(&cart, &want).unwrap();
+
+    assert_eq!(
+        card.game_settings_path(&cart),
+        d.join("System").join("games").join("NES").join("Mappy.ini")
+    );
+    assert_eq!(card.read_settings(&cart), want);
+}
+
+#[test]
+fn going_back_to_defaults_leaves_no_file_behind() {
+    let (card, _d) = tmp_card("cleared");
+    let cart = a_cart(&card);
+    card.write_settings(
+        &cart,
+        &GameSettings {
+            scale: Some(ScaleMode::Fill),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(card.game_settings_path(&cart).exists());
+
+    card.write_settings(&cart, &GameSettings::default())
+        .unwrap();
+    assert!(
+        !card.game_settings_path(&cart).exists(),
+        "an all-default game should not leave an empty file on the card"
+    );
+    assert_eq!(card.read_settings(&cart), GameSettings::default());
+}
+
+#[test]
+fn a_key_this_version_does_not_know_survives_a_save() {
+    // A card moved between SLOT2 versions must not lose the newer one's settings the first
+    // time the older one writes to it.
+    let (card, _d) = tmp_card("forward");
+    let cart = a_cart(&card);
+    let path = card.game_settings_path(&cart);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "shader=lcd3x\nscale=fill\n").unwrap();
+
+    let mut s = card.read_settings(&cart);
+    assert_eq!(s.scale, Some(ScaleMode::Fill));
+    s.scale = Some(ScaleMode::Integer);
+    card.write_settings(&cart, &s).unwrap();
+
+    // Ini::save writes "key = value", sorted, so compare on the parsed file rather than
+    // on its spelling.
+    let back = Ini::load(&path).unwrap();
+    assert_eq!(
+        back.get("shader"),
+        Some("lcd3x"),
+        "lost an unknown key: {}",
+        std::fs::read_to_string(&path).unwrap()
+    );
+    assert_eq!(back.get("scale"), Some("integer"));
+}
+
+#[test]
+fn a_typo_falls_back_to_the_default_rather_than_refusing_to_start() {
+    let (card, _d) = tmp_card("typo");
+    let cart = a_cart(&card);
+    let path = card.game_settings_path(&cart);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "scale=integar\noverscan=maybe\ncore=\n").unwrap();
+
+    let s = card.read_settings(&cart);
+    assert_eq!(s.scale, None);
+    assert_eq!(s.overscan, None);
+    assert_eq!(s.core, None);
+}
+
+#[test]
+fn the_spellings_a_person_would_actually_write_are_accepted() {
+    assert_eq!(ScaleMode::parse("Integer"), Some(ScaleMode::Integer));
+    assert_eq!(ScaleMode::parse(" INT "), Some(ScaleMode::Integer));
+    assert_eq!(ScaleMode::parse("aspect_fit"), Some(ScaleMode::AspectFit));
+    assert_eq!(ScaleMode::parse("stretch"), Some(ScaleMode::Fill));
+    assert_eq!(ScaleMode::parse("nonsense"), None);
+    for m in [ScaleMode::Integer, ScaleMode::AspectFit, ScaleMode::Fill] {
+        assert_eq!(
+            ScaleMode::parse(m.as_str()),
+            Some(m),
+            "{m:?} must round-trip"
+        );
+    }
 }

@@ -53,6 +53,25 @@ pub const SAVE_EVERY_FRAMES: u64 = 600;
 /// What to pace a frame at when a core reports nonsense for its fps.
 const FALLBACK_FPS: f64 = 60.0;
 
+/// A core's library file name from the base name a settings file gives, accepting either
+/// spelling: `mgba` and `mgba_libretro` mean the same core to a person typing it.
+fn core_file_name(base: &str) -> String {
+    let base = base.trim().trim_end_matches(".so").trim_end_matches(".dll");
+    let base = if base.ends_with("_libretro") {
+        base.to_string()
+    } else {
+        format!("{base}_libretro")
+    };
+    let ext = if cfg!(windows) {
+        "dll"
+    } else if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+    format!("{base}.{ext}")
+}
+
 /// Turn a core's reported fps into a frame period, rejecting values no console has.
 fn frame_time_for(fps: f64) -> Duration {
     let fps = if fps.is_finite() && (1.0..=1000.0).contains(&fps) {
@@ -143,7 +162,27 @@ impl Session {
         };
 
         let def = slot2_retro::def(retro_platform);
-        let dylib = core_dir.join(def.default_core.file_name());
+        let settings = card.read_settings(cart);
+
+        // A named core that is not on the card falls back to the platform's own, with a
+        // line in the log. A setting is allowed to be wrong; it is not allowed to make a
+        // game unlaunchable, and the player who typed it will not see a panic.
+        let dylib = match settings.core.as_deref() {
+            Some(name) => {
+                let named = core_dir.join(core_file_name(name));
+                if named.exists() {
+                    named
+                } else {
+                    eprintln!(
+                        "slot2: {} asks for core {name}, which is not on the card; using {}",
+                        cart.stem,
+                        def.default_core.base_name()
+                    );
+                    core_dir.join(def.default_core.file_name())
+                }
+            }
+            None => core_dir.join(def.default_core.file_name()),
+        };
         if !dylib.exists() {
             return Err(Error::NoCore(dylib));
         }
@@ -180,8 +219,17 @@ impl Session {
             core,
             retro_platform,
             aspect: def.aspect,
-            overscan: def.overscan,
-            scale: slot2_gfx::ScalePolicy::default(),
+            overscan: if settings.overscan.unwrap_or(true) {
+                def.overscan
+            } else {
+                slot2_retro::Overscan::NONE
+            },
+            scale: match settings.scale {
+                Some(slot2_store::ScaleMode::Integer) => slot2_gfx::ScalePolicy::Integer,
+                Some(slot2_store::ScaleMode::AspectFit) => slot2_gfx::ScalePolicy::AspectFit,
+                Some(slot2_store::ScaleMode::Fill) => slot2_gfx::ScalePolicy::Fill,
+                None => slot2_gfx::ScalePolicy::default(),
+            },
             producer,
             resampler,
             frame_time: frame_time_for(av.fps),

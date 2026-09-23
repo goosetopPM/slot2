@@ -10,11 +10,13 @@ pub mod atomic;
 pub mod card;
 pub mod ini;
 pub mod platform;
+pub mod settings;
 
 pub use atomic::atomic_write;
 pub use card::{Card, Cart, StateKind, StateSlot, Thumb};
 pub use ini::Ini;
 pub use platform::Platform;
+pub use settings::{GameSettings, ScaleMode};
 
 use std::fmt;
 
