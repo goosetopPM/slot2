@@ -189,7 +189,15 @@ impl App {
 
     pub fn rescan(&mut self) {
         self.carts = self.card.scan(self.platform());
+        // The card names a cart by its file; the shelf shows a game. `(USA) (Rev 1)` is a
+        // fact about the dump, and it is cleaned off here, once, rather than in the draw
+        // loop where it would be rebuilt for every cart on screen sixty times a second.
+        for cart in &mut self.carts {
+            cart.title = slot2_ui::label::clean_title(&cart.stem);
+        }
         self.shelf_view.shelf.set_len(self.carts.len());
+        let labels = self.carts.iter().map(|c| self.card.label(c)).collect();
+        self.shelf_view.set_labels(labels);
     }
 
     pub fn feed(&mut self, event: &Event) {

@@ -134,15 +134,6 @@ impl Card {
         self.root.join("BIOS")
     }
 
-    /// The label art for a cart, if the card has any: `Labels/<PLAT>/<stem>.png`.
-    ///
-    /// Checked on the card rather than guessed at, because the answer decides whether the
-    /// shelf draws a scan of the real sticker or prints one, and a path to a file that is
-    /// not there would have the view find that out once a frame.
-    pub fn label_path(&self, p: Platform, stem: &str) -> Option<PathBuf> {
-        todo!()
-    }
-
     pub fn system_dir(&self) -> PathBuf {
         self.root.join("System")
     }
@@ -160,6 +151,10 @@ impl Card {
     }
 
     /// `Labels/<PLAT>/<stem>.png` if it exists.
+    ///
+    /// Answered from the card rather than assembled by the caller, because whether the file
+    /// is there is what decides between a scan of the real sticker and a printed one, and a
+    /// path handed over unchecked would have the shelf find that out once a frame.
     pub fn label(&self, cart: &Cart) -> Option<PathBuf> {
         let p = self
             .root

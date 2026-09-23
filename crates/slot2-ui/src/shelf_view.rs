@@ -29,7 +29,7 @@ impl ShelfView {
     /// every cart on screen, is sixty stat calls a second at the one moment the device is
     /// least able to afford them.
     pub fn set_labels(&mut self, labels: Vec<Option<std::path::PathBuf>>) {
-        todo!()
+        self.labels = labels;
     }
 
     /// Draw the row making way, and the chosen cart on its way into the slot.
@@ -219,7 +219,25 @@ impl ShelfView {
         let lx = x + skin.label.x * scale_x;
         let ly = y + skin.label.y * scale_y;
 
-        canvas.rect(lx, ly, lw, lh, Color::WHITE.with_alpha(0.2 * alpha));
+        let label_path = self.labels.get(index).and_then(|p| p.as_ref());
+        let art = label_path.and_then(|p| {
+            self.label_cache
+                .art(canvas, p, (skin.label.w as u32, skin.label.h as u32))
+        });
+
+        if let Some(art) = art {
+            canvas.image(art.tex, lx, ly, lw, lh, Color::WHITE.with_alpha(alpha));
+        } else {
+            let title = titles.get(index).copied().unwrap_or("");
+            let [pr, pg, pb] = crate::label::printed_colour(title);
+            canvas.rect(
+                lx,
+                ly,
+                lw,
+                lh,
+                Color::from_rgb8(pr, pg, pb).with_alpha(alpha),
+            );
+        }
 
         if index == selected_index && index < titles.len() {
             let title = titles[index];

@@ -23,3 +23,8 @@
 # Real ROMs for the test suite: never committed.
 assets/test/local/*
 !assets/test/local/README.txt
+
+# free-gjc scratch: it drops these in the working directory
+/check_font.rs
+/clippy.txt
+/gemini-code-*.html

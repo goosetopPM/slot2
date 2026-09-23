@@ -9,13 +9,23 @@ use std::path::PathBuf;
 
 use slot2_gfx::{Color, Op, RecordingCanvas};
 use slot2_platform::{detect, Geometry};
-use slot2_store::{Card, Platform};
+use slot2_store::{Card, Cart, Platform};
 use slot2_ui::label::{clean_title, printed_colour, LabelCache, CACHE_MAX};
 use slot2_ui::layout::SafeArea;
 use slot2_ui::shelf_view::ShelfView;
 use slot2_ui::{skin, UiCtx};
 
 static NEXT_CARD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The cart for one of `card`'s games, which is how everything on a shelf is addressed.
+fn cart(g: usize) -> Cart {
+    Cart {
+        platform: Platform::Gba,
+        stem: format!("Game {g:02}"),
+        title: format!("Game {g:02}"),
+        rom: PathBuf::new(),
+    }
+}
 
 fn ctx() -> UiCtx {
     UiCtx::new(detect().profile, "en", Vec::new(), None)
@@ -30,7 +40,11 @@ fn card(n: usize, art: &[usize], art_size: (u32, u32)) -> (Card, PathBuf) {
     card.ensure_layout();
     for g in 0..n {
         let stem = format!("Game {g:02}");
-        std::fs::write(card.games_dir(Platform::Gba).join(format!("{stem}.gba")), b"r").unwrap();
+        std::fs::write(
+            card.games_dir(Platform::Gba).join(format!("{stem}.gba")),
+            b"r",
+        )
+        .unwrap();
         if art.contains(&g) {
             write_png(
                 &root.join("Labels/GBA").join(format!("{stem}.png")),
@@ -102,14 +116,17 @@ fn a_hyphen_inside_a_word_stays_there() {
 }
 
 #[test]
-fn a_title_that_is_all_tags_keeps_something_to_show() {
+fn a_title_that_is_all_tags_falls_back_to_the_filename() {
     // Cleaning a name down to nothing leaves a cart with no name at all, which on a shelf is
-    // a blank where a game should be. Whatever comes back must not be empty.
-    for stem in ["(USA)", "[!]", "   ", "()"] {
-        assert!(
-            !clean_title(stem).trim().is_empty(),
-            "{stem:?} cleaned away to nothing"
-        );
+    // a blank where a game should be. A messy name is worse than a tidy one and better than
+    // that, so what comes back is the stem, untouched.
+    //
+    // The stem, not "something non-empty": the first version of this test asked only that
+    // the result not be blank after trimming, and what satisfied it was a zero-width space
+    // glued to the front of the stem — a string that passes the assertion and draws nothing,
+    // which is the exact fault the test was written to prevent.
+    for stem in ["(USA)", "[!]", "()", "   "] {
+        assert_eq!(clean_title(stem), stem, "{stem:?} did not fall back");
     }
 }
 
@@ -132,30 +149,50 @@ fn a_printed_label_is_the_same_colour_every_time() {
 }
 
 #[test]
-fn different_games_get_different_colours() {
-    // The whole point of the printed label: at a glance, a row of them is distinguishable
-    // even when the words are too small to read.
-    let titles = [
-        "Advance Wars",
-        "Metroid Fusion",
-        "Golden Sun",
-        "Mario Kart",
-        "Fire Emblem",
-        "Castlevania",
-        "파이널 판타지",
-        "Kirby",
-    ];
-    let mut seen: Vec<[u8; 3]> = Vec::new();
-    for t in titles {
-        let c = printed_colour(t);
-        for other in &seen {
-            let d = (c[0] as i32 - other[0] as i32).abs()
-                + (c[1] as i32 - other[1] as i32).abs()
-                + (c[2] as i32 - other[2] as i32).abs();
-            assert!(d > 24, "{t} came out at {c:?}, too near {other:?}");
-        }
-        seen.push(c);
+fn printed_labels_fill_the_wheel() {
+    // The point of the printed label is that a row of them is distinguishable at a glance.
+    //
+    // Not asserted pairwise over a handful of names, which is what the first version of this
+    // test did and what it cost: two hues out of eight landing near each other is a coin
+    // toss, so the test failed on an honest hash and what came back was a hash with the
+    // bytes fed in backwards and a comment saying it separated *these titles* better. A test
+    // that can be satisfied by tuning is a test that will be.
+    //
+    // What a colour scheme has to do is use the whole wheel and not pile up on one part of
+    // it. That is a property of the mapping rather than of any eight names, and it holds for
+    // any decent hash.
+    let mut buckets = [0usize; 12];
+    for i in 0..300 {
+        let [r, g, b] = printed_colour(&format!("Game {i}"));
+        buckets[hue_bucket(r, g, b)] += 1;
     }
+    assert!(
+        buckets.iter().all(|n| *n > 0),
+        "some twelfth of the wheel is never used: {buckets:?}"
+    );
+    let most = *buckets.iter().max().unwrap_or(&0);
+    assert!(
+        most < 300 / 4,
+        "one twelfth of the wheel took {most} of 300: {buckets:?}"
+    );
+}
+
+/// Which twelfth of the hue wheel a colour is in.
+fn hue_bucket(r: u8, g: u8, b: u8) -> usize {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let c = max - min;
+    let h = if c <= f32::EPSILON {
+        0.0
+    } else if max == r {
+        60.0 * (((g - b) / c) % 6.0)
+    } else if max == g {
+        60.0 * ((b - r) / c + 2.0)
+    } else {
+        60.0 * ((r - g) / c + 4.0)
+    };
+    ((h.rem_euclid(360.0) / 30.0) as usize).min(11)
 }
 
 #[test]
@@ -171,10 +208,7 @@ fn a_printed_label_is_a_background_for_text() {
         );
         let max = r.max(g).max(b) as i32;
         let min = r.min(g).min(b) as i32;
-        assert!(
-            max - min > 20,
-            "{t:?} came out grey: {r},{g},{b}"
-        );
+        assert!(max - min > 20, "{t:?} came out grey: {r},{g},{b}");
     }
 }
 
@@ -183,16 +217,24 @@ fn a_printed_label_is_a_background_for_text() {
 #[test]
 fn the_card_finds_the_art_it_has_and_admits_the_art_it_does_not() {
     let (card, _root) = card(3, &[1], (64, 64));
-    assert!(card.label_path(Platform::Gba, "Game 00").is_none());
+    assert!(card.label(&cart(0)).is_none());
     let found = card
-        .label_path(Platform::Gba, "Game 01")
+        .label(&cart(1))
         .expect("the card has art for Game 01 and did not find it");
     assert!(found.is_file(), "{} is not a file", found.display());
-    assert!(card.label_path(Platform::Gba, "Game 02").is_none());
-    // And a stem that is not on the card at all.
-    assert!(card.label_path(Platform::Gba, "Nothing").is_none());
+    assert!(card.label(&cart(2)).is_none());
+    // A stem that is not on the card at all.
+    let missing = Cart {
+        stem: "Nothing".into(),
+        ..cart(0)
+    };
+    assert!(card.label(&missing).is_none());
     // A different platform's folder is a different shelf.
-    assert!(card.label_path(Platform::Snes, "Game 01").is_none());
+    let elsewhere = Cart {
+        platform: Platform::Snes,
+        ..cart(1)
+    };
+    assert!(card.label(&elsewhere).is_none());
 }
 
 // ------------------------------------------------------------------ the cache
@@ -200,7 +242,7 @@ fn the_card_finds_the_art_it_has_and_admits_the_art_it_does_not() {
 #[test]
 fn art_is_decoded_once_and_a_missing_file_is_opened_once() {
     let (card, _root) = card(2, &[0], (64, 64));
-    let path = card.label_path(Platform::Gba, "Game 00").unwrap();
+    let path = card.label(&cart(0)).unwrap();
     let missing = card.games_dir(Platform::Gba).join("not-a-label.png");
 
     let mut canvas = RecordingCanvas::new(720, 480);
@@ -224,7 +266,11 @@ fn art_is_decoded_once_and_a_missing_file_is_opened_once() {
             "the label was uploaded again"
         );
     }
-    assert_eq!(uploads(&canvas), after_one, "a redraw re-uploaded the label");
+    assert_eq!(
+        uploads(&canvas),
+        after_one,
+        "a redraw re-uploaded the label"
+    );
 
     // A file that is not there is remembered as not there.
     for _ in 0..30 {
@@ -239,12 +285,14 @@ fn a_big_scan_is_not_uploaded_at_scanner_resolution() {
     // better. On a Mali sharing system memory that is the difference between a shelf and a
     // shelf that stutters.
     let (card, _root) = card(1, &[0], (1024, 1024));
-    let path = card.label_path(Platform::Gba, "Game 00").unwrap();
+    let path = card.label(&cart(0)).unwrap();
     let mut canvas = RecordingCanvas::new(720, 480);
     let mut cache = LabelCache::default();
 
     let plate = (200u32, 130u32);
-    let art = cache.art(&mut canvas, &path, plate).expect("did not decode");
+    let art = cache
+        .art(&mut canvas, &path, plate)
+        .expect("did not decode");
     assert!(
         art.w <= plate.0 * 2 && art.h <= plate.1 * 2,
         "a 1024-square scan was kept at {}x{}",
@@ -261,6 +309,29 @@ fn a_big_scan_is_not_uploaded_at_scanner_resolution() {
 }
 
 #[test]
+fn a_grey_scan_is_a_scan() {
+    // Grey is a colour type a scanner produces, not a broken file. Rejecting it turns a
+    // black-and-white label into a printed one with no way to tell why.
+    let (_card, root) = card(1, &[], (0, 0));
+    let path = root.join("Labels/GBA/Game 00.png");
+    let f = std::fs::File::create(&path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(f), 16, 16);
+    enc.set_color(png::ColorType::Grayscale);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()
+        .unwrap()
+        .write_image_data(&vec![0x80u8; 16 * 16])
+        .unwrap();
+
+    let mut canvas = RecordingCanvas::new(720, 480);
+    let mut cache = LabelCache::default();
+    assert!(
+        cache.art(&mut canvas, &path, (200, 130)).is_some(),
+        "a greyscale label was treated as a broken file"
+    );
+}
+
+#[test]
 fn the_cache_does_not_grow_without_end() {
     // A card with two hundred games would otherwise hold two hundred textures. Seven carts
     // are ever on screen.
@@ -269,9 +340,7 @@ fn the_cache_does_not_grow_without_end() {
     let mut cache = LabelCache::default();
 
     for g in 0..40 {
-        let p = card
-            .label_path(Platform::Gba, &format!("Game {g:02}"))
-            .unwrap();
+        let p = card.label(&cart(g)).unwrap();
         assert!(cache.art(&mut canvas, &p, (200, 130)).is_some());
         assert!(
             cache.len() <= CACHE_MAX,
@@ -352,9 +421,7 @@ fn two_carts_on_one_row_do_not_get_one_colour() {
 #[test]
 fn a_cart_with_art_shows_the_art() {
     let (card, _root) = card(3, &[0, 1, 2], (128, 96));
-    let labels: Vec<Option<PathBuf>> = (0..3)
-        .map(|g| card.label_path(Platform::Gba, &format!("Game {g:02}")))
-        .collect();
+    let labels: Vec<Option<PathBuf>> = (0..3).map(|g| card.label(&cart(g))).collect();
     assert!(labels.iter().all(|l| l.is_some()), "the card lost its art");
 
     let (mut v, safe) = shelf_with(3, labels);
@@ -379,9 +446,7 @@ fn a_cart_with_art_shows_the_art() {
 fn a_shelf_of_both_kinds_draws_both() {
     // The ordinary card: art for the few games someone bothered with, printed for the rest.
     let (card, _root) = card(3, &[1], (128, 96));
-    let labels: Vec<Option<PathBuf>> = (0..3)
-        .map(|g| card.label_path(Platform::Gba, &format!("Game {g:02}")))
-        .collect();
+    let labels: Vec<Option<PathBuf>> = (0..3).map(|g| card.label(&cart(g))).collect();
     let (mut v, safe) = shelf_with(3, labels);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
@@ -421,7 +486,13 @@ fn a_row_with_no_labels_set_still_draws() {
     v.shelf.set_len(4);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
-    v.draw(&mut canvas, &mut c, &safe, Platform::Gba, &["A", "B", "C", "D"]);
+    v.draw(
+        &mut canvas,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &["A", "B", "C", "D"],
+    );
     assert!(!images(&canvas).is_empty(), "the shelf drew no carts");
 
     // And a labels list that is shorter than the row.
@@ -435,7 +506,10 @@ fn a_row_with_no_labels_set_still_draws() {
         Platform::Gba,
         &["A", "B", "C", "D", "E", "F"],
     );
-    assert!(!images(&canvas).is_empty(), "a short labels list emptied the row");
+    assert!(
+        !images(&canvas).is_empty(),
+        "a short labels list emptied the row"
+    );
 }
 
 #[test]
@@ -443,9 +517,7 @@ fn the_label_sits_on_the_plate_wherever_the_cart_is() {
     // Every platform's skin puts its label somewhere different, and a neighbour is drawn
     // smaller. The label has to follow the cart rather than the panel.
     let (card, _root) = card(3, &[0, 1, 2], (128, 96));
-    let labels: Vec<Option<PathBuf>> = (0..3)
-        .map(|g| card.label_path(Platform::Gba, &format!("Game {g:02}")))
-        .collect();
+    let labels: Vec<Option<PathBuf>> = (0..3).map(|g| card.label(&cart(g))).collect();
     let (mut v, safe) = shelf_with(3, labels);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
@@ -459,7 +531,10 @@ fn the_label_sits_on_the_plate_wherever_the_cart_is() {
         let (lx, ly) = (p.x + skin.label.x * sx, p.y + skin.label.y * sy);
         let (lw, lh) = (skin.label.w * sx, skin.label.h * sy);
         let on_plate = images(&canvas).iter().any(|(x, y, w, h, _)| {
-            (x - lx).abs() < 1.0 && (y - ly).abs() < 1.0 && (w - lw).abs() < 1.0 && (h - lh).abs() < 1.0
+            (x - lx).abs() < 1.0
+                && (y - ly).abs() < 1.0
+                && (w - lw).abs() < 1.0
+                && (h - lh).abs() < 1.0
         });
         assert!(
             on_plate,
@@ -474,9 +549,7 @@ fn scrolling_a_shelf_of_art_does_not_upload_every_frame() {
     // Sixty frames of a slide, with a cart's drawn size changing on every one of them. The
     // fault task 12 had, on a different texture.
     let (card, _root) = card(8, &(0..8).collect::<Vec<_>>(), (128, 96));
-    let labels: Vec<Option<PathBuf>> = (0..8)
-        .map(|g| card.label_path(Platform::Gba, &format!("Game {g:02}")))
-        .collect();
+    let labels: Vec<Option<PathBuf>> = (0..8).map(|g| card.label(&cart(g))).collect();
     let (mut v, safe) = shelf_with(8, labels);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
@@ -509,7 +582,7 @@ fn a_broken_png_is_a_printed_label_not_a_hole() {
     let bad = root.join("Labels/GBA/Game 00.png");
     std::fs::write(&bad, b"this is not a png").unwrap();
     let found = card
-        .label_path(Platform::Gba, "Game 00")
+        .label(&cart(0))
         .expect("the file is there, whatever is in it");
 
     let (mut v, safe) = shelf_with(1, vec![Some(found)]);
