@@ -1,20 +1,20 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!--
-  Panel Fit — every panel SLOT2 ships for, against every console it runs.
+  패널 배율 대조표 — SLOT2가 상대하는 모든 패널과 모든 콘솔의 조합.
 
-  Open it in any browser; it needs nothing but itself. The one network request is the
-  Google Fonts stylesheet, and the page falls back to system faces without it.
+  브라우저에서 그냥 열면 된다. 네트워크 요청은 Google Fonts 스타일시트 하나뿐이고,
+  그것마저 없으면 시스템 서체로 떨어질 뿐 계산과 레이아웃은 그대로다.
 
-  The arithmetic is slot2_gfx::place and slot2_retro::Aspect::display, transcribed into
-  JavaScript. That transcription is the thing to distrust: if it and the Rust ever disagree,
-  the Rust is right. crates/slot2/tests/scaling.rs is what actually holds them together —
-  it checks DESIGN.md's multiplier table against place() on every build.
+  계산은 slot2_gfx::place와 slot2_retro::Aspect::display를 JavaScript로 옮긴 것이다.
+  의심해야 할 부분은 바로 그 "옮긴 것"이다 — 이 파일과 Rust가 어긋나면 Rust가 맞다.
+  둘을 실제로 붙잡아 두는 건 crates/slot2/tests/scaling.rs이고, 매 빌드마다
+  DESIGN.md의 배율표를 place()에 대고 검사한다.
 
-  Published copy: https://claude.ai/artifact/Ss6Kc7kz89UrotVNzsacvm
+  게시본: https://claude.ai/artifact/Ss6Kc7kz89UrotVNzsacvm
 -->
 <style>
   :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
@@ -22,8 +22,8 @@
   img { max-width: 100%; }
   [hidden] { display: none !important; }
 </style>
-<title>Panel Fit</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<title>패널 배율 대조표</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
 <style>
   :root {
     color-scheme: light;
@@ -79,9 +79,14 @@
   body {
     background: var(--paper);
     color: var(--ink);
-    font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+    /* Archivo carries the Latin, Plex Sans KR the Hangul: the browser falls back per
+       glyph, so numbers and identifiers keep the grotesque and prose reads properly. */
+    font-family: Archivo, "IBM Plex Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
     font-size: 15px;
-    line-height: 1.5;
+    line-height: 1.62;
+    /* Korean breaks anywhere by default; keep 어절 whole. */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
     -webkit-font-smoothing: antialiased;
   }
   .wrap {
@@ -100,7 +105,7 @@
   }
   .lede {
     color: var(--ink-soft);
-    max-width: 62ch;
+    max-width: 46ch;
     margin: 0 0 8px;
   }
   .lede code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .9em; }
@@ -219,9 +224,9 @@
   .row.int .v { color: var(--integer); }
   .row.asp .v { color: var(--aspect); }
   .verdict {
-    font-family: Archivo, sans-serif;
+    font-family: Archivo, "IBM Plex Sans KR", sans-serif;
     font-size: 12.5px;
-    line-height: 1.45;
+    line-height: 1.6;
     color: var(--ink-soft);
     border-top: 1px solid var(--rule);
     padding-top: 11px;
@@ -276,25 +281,25 @@
 <body>
 <div class="wrap">
   <p class="eyebrow">SLOT2 · slot2-gfx::place</p>
-  <h1>Panel Fit</h1>
+  <h1>패널 배율 대조표</h1>
   <p class="lede">
-    Every panel SLOT2 ships for, against every console it runs. <b>Integer</b> takes the largest whole
-    multiple that fits and ignores the console's intended shape; <b>AspectFit</b> takes the largest size
-    that keeps that shape and accepts a fractional factor. The arithmetic below is
-    <code>place()</code> and <code>Aspect::display()</code>, transcribed.
+    SLOT2가 상대하는 패널 셋과 콘솔 일곱의 모든 조합. <b>Integer</b>는 들어맞는 가장 큰 정수배를
+    취하고 콘솔이 의도한 모양은 무시한다. <b>AspectFit</b>은 그 모양을 지키는 가장 큰 크기를 취하는
+    대신 배율이 정수가 아닌 것을 감수한다. 아래 계산은 <code>place()</code>와
+    <code>Aspect::display()</code>를 그대로 옮긴 것이다.
   </p>
 
   <div class="controls">
     <div id="platformChips" style="display:flex;flex-wrap:wrap;gap:8px"></div>
     <div class="toggles">
-      <button class="chip" id="cropToggle" aria-pressed="true" type="button">NES overscan crop</button>
+      <button class="chip" id="cropToggle" aria-pressed="true" type="button">NES 오버스캔 크롭</button>
     </div>
   </div>
 
   <div class="legend">
-    <span><i class="swatch int"></i> Integer — what ships by default</span>
-    <span><i class="swatch asp"></i> AspectFit — the console's real shape</span>
-    <span><i class="swatch safe"></i> 640×480 UI safe area</span>
+    <span><i class="swatch int"></i> Integer — 기본값</span>
+    <span><i class="swatch asp"></i> AspectFit — 콘솔의 실제 모양</span>
+    <span><i class="swatch safe"></i> 640×480 UI 안전 영역</span>
   </div>
 
   <div class="screens" id="screens"></div>
@@ -302,9 +307,9 @@
   <div class="matrix-wrap">
     <table>
       <caption>
-        Every combination at once. <span class="i" style="color:var(--integer);font-weight:600">Orange</span>
-        is the integer factor; <span class="a" style="color:var(--aspect)">teal</span> is the fractional one
-        AspectFit would use, and how far the integer picture sits from the shape the console meant.
+        모든 조합을 한 번에. <span class="i" style="color:var(--integer);font-weight:600">주황</span>은
+        정수 배율, <span class="a" style="color:var(--aspect)">청록</span>은 AspectFit이 쓸 비정수 배율이다.
+        그 왼쪽은 정수 배율 화면이 콘솔이 의도한 모양에서 얼마나 벗어나는지.
       </caption>
     </table>
     <div class="tablescroll">
@@ -314,27 +319,27 @@
 
   <div class="notes">
     <div class="note">
-      <h3>Why Integer is the default</h3>
-      <p>Every source pixel becomes the same number of screen pixels, so sprite edges stay hard and 8×8
-        text stays legible. A fractional factor means filtering, which on a 240-pixel-wide picture is the
-        difference between reading a menu and squinting at it.</p>
+      <h3>왜 Integer가 기본값인가</h3>
+      <p>모든 원본 픽셀이 같은 수의 화면 픽셀이 되므로 스프라이트 경계가 뭉개지지 않고 8×8 글자가
+        읽힌다. 비정수 배율은 곧 필터링이고, 가로 240픽셀짜리 화면에서 그것은 메뉴를 읽느냐 눈을
+        찌푸리느냐의 차이다.</p>
     </div>
     <div class="note">
-      <h3>Why the shapes are wrong</h3>
-      <p>A NES pixel is 8:7 — 256×240 was meant to look wider than it measures. Integer keeps the buffer's
-        proportions, so the picture comes out 12.5% narrow. Nobody who grew up on a CRT will mistake it;
-        nobody playing on a handheld tends to mind.</p>
+      <h3>왜 모양이 틀어지는가</h3>
+      <p>NES의 픽셀은 8:7이다 — 256×240은 재어본 값보다 넓게 보이도록 의도됐다. Integer는 버퍼의
+        비율을 그대로 두므로 화면이 12.5% 좁게 나온다. CRT로 자란 사람은 알아보지만, 휴대기로 하는
+        사람이 신경 쓰는 일은 드물다.</p>
     </div>
     <div class="note">
-      <h3>Why the Mega Drive is modelled differently</h3>
-      <p>It switches between 256 and 320 pixels across mid-scene and both filled the same 4:3 screen, so
-        there is no constant pixel ratio to store. <code>Aspect::Display</code> holds the shape fixed
-        instead, which is what stops the picture jumping when a game changes mode.</p>
+      <h3>왜 메가드라이브만 다르게 모델링했는가</h3>
+      <p>장면 도중 가로 256과 320을 오가는데 둘 다 같은 4:3 화면을 채웠으므로, 저장해 둘 고정 픽셀
+        비율이라는 것이 존재하지 않는다. 대신 <code>Aspect::Display</code>가 표시 모양을 고정하고,
+        그래서 게임이 모드를 바꿔도 화면이 튀지 않는다.</p>
     </div>
     <div class="note">
-      <h3>720×720 is the odd one</h3>
-      <p>The tall panel is the only one that buys a Game Boy a fourth step of scale, and the only one where
-        a 4:3 console leaves a band of unused screen above and below rather than at the sides.</p>
+      <h3>720×720만 다른 점</h3>
+      <p>세로가 긴 이 패널만이 게임보이에게 네 번째 배율 단계를 준다. 그리고 4:3 콘솔이 좌우가 아니라
+        위아래에 빈 띠를 남기는 유일한 패널이다.</p>
     </div>
   </div>
 </div>
@@ -351,14 +356,14 @@
 
   // aspect: {k:"square"} | {k:"pixel",n,d} | {k:"display",n,d}
   const PLATFORMS = [
-    { id: "gb",   name: "Game Boy",       sub: "GB · GBC", w: 160, h: 144, aspect: { k: "square" } },
-    { id: "gba",  name: "Game Boy Advance", sub: "GBA",    w: 240, h: 160, aspect: { k: "square" } },
+    { id: "gb",   name: "게임보이",        sub: "GB · GBC", w: 160, h: 144, aspect: { k: "square" } },
+    { id: "gba",  name: "게임보이 어드밴스", sub: "GBA",   w: 240, h: 160, aspect: { k: "square" } },
     { id: "nes",  name: "NES",            sub: "NES",      w: 256, h: 240, aspect: { k: "pixel", n: 8, d: 7 }, crop: 8 },
     { id: "snes", name: "SNES",           sub: "SNES",     w: 256, h: 224, aspect: { k: "pixel", n: 8, d: 7 },
-      variants: [{ label: "hi-res", w: 512, h: 448 }] },
-    { id: "md",   name: "Mega Drive",     sub: "MD",       w: 320, h: 224, aspect: { k: "display", n: 4, d: 3 },
-      variants: [{ label: "256 mode", w: 256, h: 224 }] },
-    { id: "sms",  name: "Master System",  sub: "SMS",      w: 256, h: 192, aspect: { k: "pixel", n: 8, d: 7 } },
+      variants: [{ label: "하이레즈", w: 512, h: 448 }] },
+    { id: "md",   name: "메가드라이브",     sub: "MD",      w: 320, h: 224, aspect: { k: "display", n: 4, d: 3 },
+      variants: [{ label: "256 모드", w: 256, h: 224 }] },
+    { id: "sms",  name: "마스터 시스템",    sub: "SMS",     w: 256, h: 192, aspect: { k: "pixel", n: 8, d: 7 } },
   ];
 
   // --- slot2_retro::Aspect::display ---------------------------------------
@@ -396,8 +401,8 @@
   }
 
   const fmtErr = (e) => Math.abs(e) < 0.05
-    ? "exact"
-    : `${Math.abs(e).toFixed(1)}% ${e > 0 ? "wide" : "narrow"}`;
+    ? "정확"
+    : `${Math.abs(e).toFixed(1)}% ${e > 0 ? "넓음" : "좁음"}`;
 
   const state = { platform: "gba", crop: true };
 
@@ -439,7 +444,7 @@
           <div class="devices">${g.devices.join("<br>")}</div>
         </header>
         <svg class="stage" viewBox="0 0 ${g.w} ${g.h}" role="img"
-             aria-label="${p.name} on a ${g.w} by ${g.h} panel: integer ${i.scale} times, aspect fit ${a.scale.toFixed(2)} times">
+             aria-label="${g.w}×${g.h} 패널의 ${p.name}: 정수 배율 ${i.scale}배, 비율 유지 ${a.scale.toFixed(2)}배">
           <rect class="panel" x="0" y="0" width="${g.w}" height="${g.h}"/>
           <rect class="int" x="${i.x}" y="${i.y}" width="${i.w}" height="${i.h}"/>
           <rect class="asp" x="${a.x}" y="${a.y}" width="${a.w}" height="${a.h}"/>
@@ -451,12 +456,12 @@
           <div class="row int">
             <span class="k">Int</span>
             <span class="v">${i.scale}× · ${i.w}×${i.h}</span>
-            <span class="m">${iFill.toFixed(0)}% of panel</span>
+            <span class="m">패널의 ${iFill.toFixed(0)}%</span>
           </div>
           <div class="row asp">
             <span class="k">Asp</span>
             <span class="v">${a.scale.toFixed(2)}× · ${a.w}×${a.h}</span>
-            <span class="m">${aFill.toFixed(0)}% of panel</span>
+            <span class="m">패널의 ${aFill.toFixed(0)}%</span>
           </div>
         </div>
         <p class="verdict">${verdict(p, i, a, err, g)}</p>`;
@@ -468,18 +473,18 @@
     const bits = [];
     const gap = a.scale - i.scale;
     if (Math.abs(err) < 0.05) {
-      bits.push(`Square pixels, so the integer picture is already the right shape — AspectFit only stretches it ${gap > 0.01 ? `a further <b>${gap.toFixed(2)}×</b>` : "no further"}.`);
+      bits.push(`정사각 픽셀이라 정수 배율 화면이 이미 올바른 모양이다 — AspectFit은 ${gap > 0.01 ? `여기서 <b>${gap.toFixed(2)}×</b>까지 더 늘릴 뿐이다` : "여기서 더 늘리지 않는다"}.`);
     } else {
-      bits.push(`Integer comes out <b>${fmtErr(err)}</b>; AspectFit fixes the shape at <b>${a.scale.toFixed(2)}×</b>, which is not a whole number and so is filtered.`);
+      bits.push(`정수 배율은 <b>${fmtErr(err)}</b>으로 나온다. AspectFit은 <b>${a.scale.toFixed(2)}×</b>로 모양을 맞추지만, 정수가 아니므로 필터링된다.`);
     }
-    if (i.w > g.w || i.h > g.h) bits.push(" The frame is larger than the panel and is cropped.");
+    if (i.w > g.w || i.h > g.h) bits.push(" 화면이 패널보다 커서 잘린다.");
     return bits.join(" ");
   }
 
   // --- the full matrix -----------------------------------------------------
   function renderMatrix() {
     const t = document.getElementById("matrix");
-    let head = '<thead><tr><th scope="col">Console</th><th scope="col">Source</th><th scope="col">Shape</th>';
+    let head = '<thead><tr><th scope="col">콘솔</th><th scope="col">원본</th><th scope="col">모양</th>';
     GEOMETRIES.forEach((g) => { head += `<th scope="col">${g.w}×${g.h}</th>`; });
     head += "</tr></thead>";
 
@@ -493,12 +498,12 @@
         const sh = r.crop && state.crop ? r.h - 2 * r.crop : r.h;
         const [an, ad] = displayAspect(p.aspect, sw, sh);
         const err = shapeError(p, sw, sh);
-        const shapeName = p.aspect.k === "square" ? "1:1 pixels"
-          : p.aspect.k === "pixel" ? `${p.aspect.n}:${p.aspect.d} pixels`
-            : `${p.aspect.n}:${p.aspect.d} display`;
+        const shapeName = p.aspect.k === "square" ? "1:1 픽셀"
+          : p.aspect.k === "pixel" ? `${p.aspect.n}:${p.aspect.d} 픽셀`
+            : `${p.aspect.n}:${p.aspect.d} 표시비`;
 
         body += `<tr class="${r.variant ? "variant" : ""}"><th scope="row">${r.label}</th>`;
-        body += `<td class="num">${sw}×${sh}${r.crop && state.crop ? " <span style=\"color:var(--ink-faint)\">cropped</span>" : ""}</td>`;
+        body += `<td class="num">${sw}×${sh}${r.crop && state.crop ? " <span style=\"color:var(--ink-faint)\">크롭</span>" : ""}</td>`;
         body += `<td>${shapeName} <span style="color:var(--ink-faint)">· ${fmtErr(err)}</span></td>`;
         GEOMETRIES.forEach((g) => {
           const i = placeInteger(sw, sh, g.w, g.h);
