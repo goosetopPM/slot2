@@ -12,18 +12,22 @@
 //!   cache, `BTN(..)` spans as a rounded button cap with its label inside.
 //! - [`Splash`] is the first screen: wordmark, greeting, device line, a hint row.
 
+pub mod art;
 pub mod face;
 pub mod game_list;
 pub mod layout;
 pub mod power_menu;
+pub mod shelf;
 pub mod skin;
 pub mod splash;
 pub mod svg;
 
+pub use art::ArtCache;
 pub use face::FaceCache;
 pub use game_list::GameList;
 pub use layout::{SafeArea, SAFE_H, SAFE_W};
 pub use power_menu::{PowerChoice, PowerMenu};
+pub use shelf::{Placement, Shelf, SIDE_ALPHA, SIDE_SCALE};
 pub use splash::Splash;
 
 use std::path::{Path, PathBuf};
