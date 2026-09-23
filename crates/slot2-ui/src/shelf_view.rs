@@ -16,9 +16,22 @@ const SLIT: Color = Color::from_rgb8(0x07, 0x08, 0x0A);
 pub struct ShelfView {
     pub shelf: Shelf,
     cache: ArtCache,
+    labels: Vec<Option<std::path::PathBuf>>,
+    label_cache: crate::label::LabelCache,
 }
 
 impl ShelfView {
+    /// Where the card's label art is, one entry per cart in the row's order, `None` for a
+    /// cart the card has no scan of.
+    ///
+    /// Set when the row changes rather than passed to `draw`, because whether a file exists
+    /// is a question for a rescan and not for a frame: asking it sixty times a second, for
+    /// every cart on screen, is sixty stat calls a second at the one moment the device is
+    /// least able to afford them.
+    pub fn set_labels(&mut self, labels: Vec<Option<std::path::PathBuf>>) {
+        todo!()
+    }
+
     /// Draw the row making way, and the chosen cart on its way into the slot.
     ///
     /// `seat` is `insert::seat_in(t)` on the way in and `insert::seat_out(t)` on the way
