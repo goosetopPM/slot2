@@ -273,3 +273,38 @@ fn no_core_is_left_to_correct_the_aspect_or_the_overscan_itself() {
         }
     }
 }
+
+#[test]
+fn colour_correction_follows_the_console_not_the_core() {
+    // One core runs all three Game Boy platforms, and the right answer differs for each,
+    // so mGBA's own "Auto" is not it.
+    let get = |p: Platform, key: &str| {
+        options_for(p, false, SP)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+
+    // A GBA's panel over-saturated what it was given, and artists drew around that.
+    // mGBA's correction is a mild panel model, not a heavy filter, and has no strength
+    // dial — a lighter touch than this would have to be a grading pass of our own.
+    assert_eq!(get(Platform::Gba, "mgba_color_correction").as_deref(), Some("GBA"));
+
+    // A Game Boy Color distorted colour in a way games were drawn around.
+    assert_eq!(get(Platform::Gbc, "mgba_color_correction").as_deref(), Some("GBC"));
+
+    // A DMG has no colour to correct — it has a palette, and the green one is the point.
+    assert_eq!(get(Platform::Gb, "mgba_color_correction").as_deref(), Some("OFF"));
+    assert_eq!(get(Platform::Gb, "mgba_gb_colors").as_deref(), Some("DMG Green"));
+    assert_eq!(get(Platform::Gbc, "mgba_gb_colors"), None, "a Colour game brings its own");
+
+    // Whatever is set, it is set once: a duplicate key means the last write silently wins.
+    for p in [Platform::Gb, Platform::Gbc, Platform::Gba] {
+        let opts = options_for(p, false, SP);
+        let mut keys: Vec<&str> = opts.iter().map(|(k, _)| k.as_str()).collect();
+        keys.sort_unstable();
+        let before = keys.len();
+        keys.dedup();
+        assert_eq!(before, keys.len(), "{p:?} sets an option twice");
+    }
+}

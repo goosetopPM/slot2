@@ -313,10 +313,32 @@ pub fn options_for(
                 },
             );
 
-            // Colour correction turns a GBA's washed-out panel into what the hardware
-            // actually looked like. On a backlit IPS screen the original wash is the
-            // artefact, not the effect — off, as on the author's own device.
-            set("mgba_color_correction", "OFF");
+            // Colour correction, which is per console and not per core.
+            //
+            // The option takes OFF, GBA, GBC or Auto. Auto looks like the obvious choice
+            // and is not: it decides from the running system, and this frontend already
+            // knows which shelf the game came off, so the decision is made here where it
+            // can be argued with.
+            //
+            // Both consoles get their own correction. A GBA and a Game Boy Color each
+            // distorted colour in a way artists drew around — over-saturated sprites on a
+            // dim reflective panel — so correcting it shows what they were aiming at
+            // rather than what an unlit screen made of it. There is no strength dial: the
+            // option is on or off, and mGBA's is a mild panel model rather than a heavy
+            // filter. A dial would have to be a grading pass of our own.
+            //
+            // A DMG has no colour to correct at all; what it has is a palette, and the
+            // green of the original LCD is what a Game Boy shelf is for. (mGBA's own
+            // default is Grayscale, which is nobody's memory of the hardware.)
+            match def.platform {
+                Platform::Gba => set("mgba_color_correction", "GBA"),
+                Platform::Gbc => set("mgba_color_correction", "GBC"),
+                Platform::Gb => {
+                    set("mgba_color_correction", "OFF");
+                    set("mgba_gb_colors", "DMG Green");
+                }
+                _ => set("mgba_color_correction", "OFF"),
+            }
 
             // Holding left and right at once is a thing no d-pad can do and several games
             // crash on.

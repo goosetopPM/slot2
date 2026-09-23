@@ -146,6 +146,16 @@ SGB 테두리는 화면을 감싸는 게 아니라 코어 출력을 160×144에�
 
 **코어의 aspect·overscan 옵션은 하나도 설정하지 않는다.** 둘 다 프론트엔드가 `PlatformDef`에서 결정하므로, 코어에게도 시키면 보정이 두 번 걸린다. FCEUmm의 기본 8줄 크롭이 실제로 그럴 뻔했고, 테스트가 막는다.
 
+**색보정은 코어가 아니라 콘솔에 붙는다.** mGBA 하나가 게임보이 셋을 전부 돌리지만 정답은 셋이 다르므로, 코어의 `Auto`(구동 중인 시스템에서 추론)를 쓰지 않고 여기서 정한다 — 어느 선반에서 나온 게임인지는 프론트엔드가 이미 알고, 여기서 정해야 나중에 반박할 수 있다.
+
+| 플랫폼 | `mgba_color_correction` | 비고 |
+|---|---|---|
+| GBA | `GBA` | 패널이 과채도였고 아티스트가 그걸 감안해 그렸다 |
+| GBC | `GBC` | 위와 같은 이유 |
+| GB | `OFF` + `mgba_gb_colors = "DMG Green"` | 보정할 색이 없다. 있는 건 팔레트이고, 원본 LCD의 초록이 게임보이 선반의 이유다 |
+
+mGBA의 보정에는 **강도 조절이 없다**(켜거나 끄거나). 다만 무거운 필터가 아니라 패널 모델이라 원래 온건하다. 이보다 더 약하게 주고 싶으면 우리 쪽 그레이딩 패스가 있어야 한다 — DESIGN의 `CoreQuirks::color_grade`가 그 자리다. GB 팔레트 기본값은 mGBA가 `Grayscale`인데 그건 누구의 기억도 아니라서 `DMG Green`으로 바꿨다(spruce의 Gambatte 설정이 `GB-DMG`였던 것과 같은 선택).
+
 **셰이더 프리셋**: `None`, `SharpBilinear`, `Lcd3x`(휴대기 기본), `ZfastCrt`(거치기 기본), `Scanline`. GLSL ES 단일 패스. 표준 uniform: `TextureSize`, `InputSize`, `OutputSize`, `FrameCount` — 후일 `.glslp` 호환의 기반.
 
 **오버레이**: `assets/overlays/<platform>/<geometry>.png` 및 카드 `System/Overlays/` 덮어쓰기. 게임 레이어 위, UI 레이어 아래.

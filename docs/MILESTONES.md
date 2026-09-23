@@ -56,7 +56,7 @@
 작업
 - [x] `cores/{fceumm,snes9x,genesis_plus_gx}` 빌드 스크립트 + 라이선스·소스 동봉 규칙 (gpSP는 GBA 대안 코어라 후순위)
 - [x] `registry`: PlatformDef 7종 + 원본 크기·표시 비율·오버스캔. 코어 선택은 게임별 ini로 (대안 코어 테이블은 gpSP와 함께)
-- [ ] `quirks/{gpsp,fceumm,snes9x,gpgx}`: 색보정(mGBA GB) — 옵션 프리셋과 입력 맵(SNES·MD 6버튼)은 registry에서 완료
+- [x] 옵션 프리셋 · 입력 맵(SNES·MD 6버튼) · 색보정 — 전부 registry에서. 별도 `quirks/` 모듈은 코어별로 갈라질 일이 생길 때까지 만들지 않는다
 - [x] `SET_GEOMETRY`/`SET_SYSTEM_AV_INFO` 처리(MD 256↔320, SNES 하이레즈)
 - [x] `ScalePolicy` 3모드 + 플랫폼×지오메트리 기본값, NES 오버스캔 크롭 옵션
 - [ ] 되감기 링버퍼 플랫폼별 예산, 빨리감기
