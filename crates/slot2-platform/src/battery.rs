@@ -57,7 +57,14 @@ impl Gauge {
     /// for the host window, where there is no gauge and the corner would otherwise be empty
     /// on the one machine the HUD is developed on.
     pub fn detect() -> Gauge {
-        todo!()
+        match std::env::var(BATTERY_ENV)
+            .ok()
+            .as_deref()
+            .and_then(parse_override)
+        {
+            Some(b) => Gauge::fixed(b),
+            None => Gauge::probe(Path::new("/sys")),
+        }
     }
 
     /// Against an arbitrary sysfs root, which is what makes the walk testable off device.
@@ -66,14 +73,32 @@ impl Gauge {
     /// A charger is a power supply too and has no charge of its own to report, so an entry
     /// counts only if its `type` is `Battery` *and* it has a `capacity` to read.
     pub fn probe(sysfs: &Path) -> Gauge {
-        let _ = sysfs;
-        todo!()
+        let class = sysfs.join(CLASS);
+        let mut entries: Vec<PathBuf> = match std::fs::read_dir(&class) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.is_dir())
+                .collect(),
+            // A missing or unreadable class is a board without a gauge, not an error.
+            Err(_) => return Gauge::none(),
+        };
+        // Name order, never read_dir order: read_dir order is the filesystem's, which a
+        // reboot reshuffles, and two supplies must resolve the same way every boot.
+        entries.sort();
+        for p in entries {
+            let is_battery = std::fs::read_to_string(p.join("type"))
+                .map(|t| t.trim().eq_ignore_ascii_case("Battery"))
+                .unwrap_or(false);
+            if is_battery && p.join("capacity").is_file() {
+                return Gauge(Source::Sysfs(p));
+            }
+        }
+        Gauge::none()
     }
 
     /// A reading that never changes. What `SLOT2_BATTERY` builds, and what a test uses.
     pub fn fixed(battery: Battery) -> Gauge {
-        let _ = battery;
-        todo!()
+        Gauge(Source::Fixed(battery))
     }
 
     /// No gauge. What a device with no battery node has, and the default.
@@ -91,13 +116,29 @@ impl Gauge {
     /// Reads rather than remembers: the charge state changes the instant a cable moves, and
     /// a cached one is a gauge that lies for as long as the caller's poll interval.
     pub fn read(&self) -> Option<Battery> {
-        todo!()
+        match &self.0 {
+            Source::Fixed(b) => Some(*b),
+            Source::Sysfs(dir) => {
+                // Both halves now, from the two files: read in turn and a cable move lands
+                // between them, giving a percent and a charge that never coexisted.
+                let percent = read_percent(dir)?;
+                let status = std::fs::read_to_string(dir.join("status")).ok();
+                Some(Battery {
+                    percent,
+                    charge: parse_charge(&status.unwrap_or_default()),
+                })
+            }
+            Source::Absent => None,
+        }
     }
 
     /// Which directory the walk settled on, for the diagnostics screen. `None` for a fixed
     /// reading and for no gauge, neither of which came from a file.
     pub fn path(&self) -> Option<&Path> {
-        todo!()
+        match &self.0 {
+            Source::Sysfs(p) => Some(p),
+            Source::Fixed(_) | Source::Absent => None,
+        }
     }
 }
 
@@ -105,13 +146,59 @@ impl Gauge {
 /// on a charger that is not filling, an empty file, a node that is not there — is the
 /// reading that leaves every policy where it was.
 pub fn parse_charge(text: &str) -> Charge {
-    let _ = text;
-    todo!()
+    // The kernel's own words, exactly: the sysfs file is machine-written and consistent,
+    // and only the override is hand-typed, so the override's case-insensitivity lives in
+    // parse_override's normalization, not here. "charging" lowercase is a string the
+    // kernel does not write and stays Unknown.
+    match text.trim() {
+        "Charging" => Charge::Charging,
+        "Discharging" => Charge::Discharging,
+        "Full" => Charge::Full,
+        _ => Charge::Unknown,
+    }
+}
+
+/// A gauge percent off a file's text or an override's own half: a whole number clamped to
+/// 0..=100. Whitespace is the newline sysfs leaves and the spaces a hand-typed variable
+/// carries. `None` for anything else — an unparsable capacity is no reading at all, never
+/// zero, because zero is a battery critical and a different screen.
+fn parse_percent(text: &str) -> Option<u8> {
+    let n: u32 = text.trim().parse().ok()?;
+    u8::try_from(n.min(100)).ok()
+}
+
+/// `capacity` off a supply directory. A driver advertising the file and leaving it empty —
+/// which this PMIC does to `current_now` — is the same as the file not being there.
+fn read_percent(dir: &Path) -> Option<u8> {
+    parse_percent(&std::fs::read_to_string(dir.join("capacity")).ok()?)
 }
 
 /// `SLOT2_BATTERY`'s grammar. `None` for anything that is not a percent, so a typo in the
 /// environment is an absent gauge rather than a gauge reading zero.
 pub fn parse_override(text: &str) -> Option<Battery> {
-    let _ = text;
-    todo!()
+    // One comma or none; a percent never contains one, so split at the first and take the
+    // rest as the status, hand-typed and therefore matched case-insensitively.
+    let (percent, status) = match text.split_once(',') {
+        Some((p, s)) => (p, Some(s)),
+        None => (text, None),
+    };
+    let percent = parse_percent(percent)?;
+    // "50," and "50,sideways" are a typo, not an unknown charge: the state is optional by
+    // absence only, never by being unparseable.
+    let charge = match status {
+        Some(s) => {
+            // Hand-typed, so matched case-insensitively — not through parse_charge, whose
+            // arms are the kernel's exact words. Lowercasing then matching those arms can
+            // only ever produce Unknown. An empty state and "sideways" stay the typos
+            // they are.
+            match s.trim().to_ascii_lowercase().as_str() {
+                "charging" => Charge::Charging,
+                "discharging" => Charge::Discharging,
+                "full" => Charge::Full,
+                _ => return None,
+            }
+        }
+        None => Charge::Unknown,
+    };
+    Some(Battery { percent, charge })
 }

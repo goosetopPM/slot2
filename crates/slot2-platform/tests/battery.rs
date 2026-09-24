@@ -9,9 +9,13 @@ use slot2_platform::clock::{hhmm, is_set, parse_offset_min, DAY, SET_AFTER};
 
 static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// A sysfs root with the named supplies under `class/power_supply`. Each is
-/// `(dir, type, files)`, and a file with a `None` body is not written at all.
-fn sysfs(supplies: &[(&str, &str, &[(&str, Option<&str>)])]) -> PathBuf {
+/// One supply to fake: its directory name, what its `type` says, and the files to put in
+/// it. A file with a `None` body is not written at all, which is how an absent attribute is
+/// told apart from an empty one.
+type Supply<'a> = (&'a str, &'a str, &'a [(&'a str, Option<&'a str>)]);
+
+/// A sysfs root with the named supplies under `class/power_supply`.
+fn sysfs(supplies: &[Supply]) -> PathBuf {
     let i = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("slot2-gauge-{}-{i}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
