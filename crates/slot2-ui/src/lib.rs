@@ -14,6 +14,7 @@
 
 pub mod art;
 pub mod face;
+pub mod hud;
 pub mod image;
 pub mod insert;
 pub mod label;
@@ -30,6 +31,7 @@ pub mod wallpaper;
 
 pub use art::ArtCache;
 pub use face::FaceCache;
+pub use hud::Hud;
 pub use layout::{SafeArea, SAFE_H, SAFE_W};
 pub use power_menu::{PowerChoice, PowerMenu};
 pub use shelf::{Placement, Shelf, SIDE_ALPHA, SIDE_SCALE};

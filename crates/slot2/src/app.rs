@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use slot2_gfx::Canvas;
 use slot2_input::{Action, Button, Event, GestureConfig, Gestures, State};
+use slot2_platform::{Battery, Gauge};
 use slot2_retro::LogicalButton;
 use slot2_store::{Card, Cart, Platform};
 use slot2_ui::{insert, shelf_view::ShelfView, PowerMenu, Splash, UiCtx};
@@ -59,6 +60,14 @@ pub enum SinkRequest {
     /// The session ended; drop the sink.
     Close,
 }
+
+/// How often the gauge is actually asked, in seconds.
+///
+/// Sysfs is a file read and the frontend draws sixty times a second. Measured against the
+/// `Instant` `tick` is handed, never against the animation `dt`: that dt is clamped to 1/30 s
+/// so a slow frame cannot destabilise the row spring, and a poll counted in clamped dt would
+/// need three hundred ticks to reach ten seconds.
+pub const BATTERY_POLL_S: f32 = 10.0;
 
 /// How much faster R2 makes it. Four is the most that is still followable on a handheld
 /// screen, and the A53 can hold it for every core here.
@@ -94,6 +103,13 @@ pub struct App {
     /// Whether the clip for the animation in progress has been fired. The contacts happen
     /// once per insert, and so does the noise they make.
     sfx_fired: bool,
+    /// Where to ask about the charge, and the last thing it said. `Gauge::none()` until a
+    /// backend hands over a real one, so a test sees no battery until it says otherwise.
+    gauge: Gauge,
+    battery: Option<Battery>,
+    /// When the gauge was last read, on the tick clock.
+    battery_read: Option<Instant>,
+    hud: slot2_ui::Hud,
 }
 
 impl App {
@@ -145,6 +161,10 @@ impl App {
             refusal: None,
             toast: None,
             sfx_fired: false,
+            gauge: Gauge::none(),
+            battery: None,
+            battery_read: None,
+            hud: slot2_ui::Hud::default(),
         };
         if screen == Screen::List {
             app.rescan();
@@ -251,6 +271,16 @@ impl App {
         for action in actions {
             self.act(action);
         }
+    }
+
+    /// Hand the app the machine's gauge, and take a reading now.
+    ///
+    /// Now rather than on the next interval: waiting one out would leave the corner empty
+    /// for the first ten seconds of every boot, which is most of the time anyone spends
+    /// looking at a shelf they have just turned on.
+    pub fn set_gauge(&mut self, gauge: Gauge) {
+        let _ = gauge;
+        todo!()
     }
 
     pub fn tick(&mut self, now: Instant) {
