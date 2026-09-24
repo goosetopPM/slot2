@@ -122,6 +122,7 @@
 - [ ] 한·영 혼합 정렬 정책, 파일명 특수문자 처리
 - [ ] 셰이더 프리셋 4종 + 플랫폼 기본값, 오버레이 로더 + GB·CubeXX용 샘플 베젤
 - [ ] 언어팩 덮어쓰기(`System/Lang/`) + 폰트 지정 동작 확인
+- [ ] 시간대 설정 — 설정 메뉴에서 UTC 오프셋을 고르고, 그 값이 `SLOT2_UTC_OFFSET_MIN`을 대체한다. BaseOS는 환경변수 없이 `System/frontend`를 exec 하므로(DESIGN §2) 이 화면이 생기기 전까지 실기 시계는 UTC다
 - [ ] 번역 기여 가이드(`docs/TRANSLATING.md`)
 
 **Acceptance**
