@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use slot2_gfx::Canvas;
 use slot2_input::{Action, Button, Event, GestureConfig, Gestures, State};
-use slot2_platform::{Battery, Gauge};
+use slot2_platform::{clock, Battery, Gauge};
 use slot2_retro::LogicalButton;
 use slot2_store::{Card, Cart, Platform};
 use slot2_ui::{insert, shelf_view::ShelfView, PowerMenu, Splash, UiCtx};
@@ -279,8 +279,9 @@ impl App {
     /// for the first ten seconds of every boot, which is most of the time anyone spends
     /// looking at a shelf they have just turned on.
     pub fn set_gauge(&mut self, gauge: Gauge) {
-        let _ = gauge;
-        todo!()
+        self.battery = gauge.read();
+        self.gauge = gauge;
+        self.battery_read = None;
     }
 
     pub fn tick(&mut self, now: Instant) {
@@ -313,6 +314,16 @@ impl App {
             }
         }
         self.last_tick = Some(now);
+        // The gauge is read on its own clock, the tick's `Instant`, never the clamped dt:
+        // that dt is clamped so a stalled frame cannot destabilise the row spring, and a
+        // poll counted in it would take three hundred frames to reach a ten-second interval.
+        let due = self
+            .battery_read
+            .is_none_or(|last| now.duration_since(last).as_secs_f32() >= BATTERY_POLL_S);
+        if due {
+            self.battery = self.gauge.read();
+            self.battery_read = Some(now);
+        }
 
         let actions = self.gestures.tick(now);
         for action in actions {
@@ -612,6 +623,17 @@ impl App {
         let safe = ctx.safe;
         if let Some(t) = self.toast.as_ref() {
             t.draw(canvas, ctx, &safe);
+        }
+        // The corner furniture is the machine's, not the game's: it wears on the shelf-side
+        // screens and stays off the splash (its own composition) and any running core
+        // (which owns the screen).
+        let local = clock::now_local();
+        let local = clock::is_set(local).then_some(local);
+        if matches!(
+            self.screen,
+            Screen::List | Screen::Inserting | Screen::Ejecting | Screen::Power(_)
+        ) {
+            self.hud.draw(canvas, ctx, &safe, self.battery, local);
         }
         canvas.set_origin(0.0, 0.0);
     }

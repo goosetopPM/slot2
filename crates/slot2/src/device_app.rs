@@ -100,6 +100,7 @@ pub fn run(boot: Boot) {
         true,
         Screen::List,
     );
+    app.set_gauge(slot2_platform::Gauge::detect());
     eprintln!(
         "slot2: {} carts on the {} shelf",
         app.carts().len(),

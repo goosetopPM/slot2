@@ -14,6 +14,7 @@ use slot2_gfx::{Canvas, Color};
 use slot2_platform::{clock, Battery, Charge};
 
 use crate::art::ArtCache;
+use crate::face;
 use crate::layout::SafeArea;
 use crate::UiCtx;
 
@@ -67,6 +68,9 @@ const _: () = assert!(BOLT_GAP > 0.0);
 
 /// Between the capsule and the number.
 const GAP: f32 = 7.0;
+/// Text size of the percent and the clock. The hint size, so the corner furniture reads as
+/// quieter than anything the layout says.
+const PX_TEXT: f32 = crate::PX_HINT;
 
 /// Below this, and going down, the gauge changes colour.
 ///
@@ -106,9 +110,109 @@ impl Hud {
         battery: Option<Battery>,
         local_secs: Option<i64>,
     ) {
-        let _ = (canvas, ctx, safe, battery, local_secs);
-        todo!()
+        // Panel corners, never the safe-area offset: the HUD belongs to the screen, and on
+        // the square panel the safe area sits 120 px down (DESIGN 167).
+        let top = HUD_MARGIN;
+        let band_mid = top + HUD_H / 2.0;
+        let panel_w = safe.panel_w as f32;
+
+        if let Some(secs) = local_secs {
+            let text = clock_text(secs);
+            let text_w = face::measure(ctx, &text, PX_TEXT);
+            let x = HUD_MARGIN;
+            canvas.rect(
+                x,
+                top,
+                text_w + 2.0 * PAD_X,
+                HUD_H,
+                PLATE.with_alpha(PLATE_ALPHA),
+            );
+            // Centred on the band, on the face's own height, so the digits sit mid-plate
+            // whatever the font chain rasterised.
+            let f = face::face(canvas, ctx, &text, PX_TEXT);
+            let y = band_mid - f.h as f32 / 2.0;
+            face::draw_text(canvas, ctx, &text, PX_TEXT, x + PAD_X, y, INK);
+        }
+
+        if let Some(b) = battery {
+            let w = gauge_width(ctx, b);
+            let x = panel_w - HUD_MARGIN - w;
+            canvas.rect(x, top, w, HUD_H, PLATE.with_alpha(PLATE_ALPHA));
+            draw_gauge(canvas, ctx, self, x + PAD_X, band_mid, b);
+        }
     }
+}
+
+/// One corner of the HUD: the bolt slot, the capsule and the percent, left to right from
+/// `(x, band_mid)` -- the mid-line of the band, on which everything in it is centred on its
+/// own measured height.
+fn draw_gauge(
+    canvas: &mut dyn Canvas,
+    ctx: &mut UiCtx,
+    hud: &mut Hud,
+    x: f32,
+    band_mid: f32,
+    battery: Battery,
+) {
+    let ink = ink(battery);
+
+    // The bolt slot, reserved whether or not anything is charging. Drawing it empty keeps
+    // the capsule still when a cable moves (the contract behind `BOLT_GAP`).
+    let bolt_y = band_mid - BOLT_H / 2.0;
+    if battery.charge == Charge::Charging {
+        if let Some(tex) = hud.art.mask(canvas, BOLT_SVG, BOLT_W as u32, BOLT_H as u32) {
+            canvas.image(tex, x, bolt_y, BOLT_W, BOLT_H, ink);
+        }
+    }
+
+    // The capsule, right of the slot: four walls, then the fill inside them, then the nub
+    // on the positive end. The walls sit on whole pixels so a 1.5 px wall does not straddle
+    // two of them and read at half strength.
+    let cap_x = x + BOLT_W + BOLT_GAP;
+    let cap_y = (band_mid - GAUGE_H / 2.0).round();
+    let cap_w = GAUGE_W;
+    let cap_h = GAUGE_H;
+    let wall = WALL;
+    canvas.rect(cap_x, cap_y, cap_w, wall, ink);
+    canvas.rect(cap_x, cap_y + cap_h - wall, cap_w, wall, ink);
+    canvas.rect(cap_x, cap_y + wall, wall, cap_h - 2.0 * wall, ink);
+    canvas.rect(
+        cap_x + cap_w - wall,
+        cap_y + wall,
+        wall,
+        cap_h - 2.0 * wall,
+        ink,
+    );
+
+    let fill_h = cap_h - 4.0 * wall;
+    let inner_w = cap_w - 4.0 * wall;
+    let fill_w = inner_w * f32::from(battery.percent) / 100.0;
+    if fill_w > 0.0 {
+        canvas.rect(cap_x + 2.0 * wall, cap_y + 2.0 * wall, fill_w, fill_h, ink);
+    }
+
+    canvas.rect(
+        cap_x + cap_w,
+        cap_y + (cap_h - NUB_H) / 2.0,
+        NUB_W,
+        NUB_H,
+        ink,
+    );
+
+    // The number, right of the nub, in the same ink as the capsule so the cluster reads as
+    // one control. The percent sign is part of the text, not decoration the caller adds.
+    let text = percent_text(battery);
+    let f = face::face(canvas, ctx, &text, PX_TEXT);
+    let text_x = cap_x + cap_w + NUB_W + GAP;
+    face::draw_text(
+        canvas,
+        ctx,
+        &text,
+        PX_TEXT,
+        text_x,
+        band_mid - f.h as f32 / 2.0,
+        ink,
+    );
 }
 
 /// The ink a reading is drawn in: the warning colour only when it is low *and* going down.
@@ -116,28 +220,29 @@ impl Hud {
 /// A pack at 8% with a cable in it is a pack on its way up, and a red gauge there is a
 /// warning about a problem that is already being fixed.
 pub fn ink(battery: Battery) -> Color {
-    let _ = battery;
-    todo!()
+    if battery.charge == Charge::Discharging && battery.percent < LOW_PERCENT {
+        LOW_INK
+    } else {
+        INK
+    }
 }
 
 /// What the number says. The percent sign is part of it: a bare `72` beside a capsule is a
 /// number that could be minutes.
 pub fn percent_text(battery: Battery) -> String {
-    let _ = battery;
-    todo!()
+    format!("{}%", battery.percent)
 }
 
 /// What the clock says, which is `clock::hhmm` and nothing else. Here so the HUD has one
 /// place that turns seconds into the string the face cache is keyed on.
 pub fn clock_text(local_secs: i64) -> String {
-    let _ = local_secs;
-    todo!()
+    clock::hhmm(local_secs)
 }
 
 /// How wide the battery cluster is, plate included, at this reading. The number is the only
 /// part that changes width, and the cluster is right-anchored, so this is what decides where
 /// its left edge falls.
 pub fn gauge_width(ctx: &mut UiCtx, battery: Battery) -> f32 {
-    let _ = (ctx, battery);
-    todo!()
+    let text = percent_text(battery);
+    PAD_X + BOLT_W + BOLT_GAP + GAUGE_W + NUB_W + GAP + face::measure(ctx, &text, PX_TEXT) + PAD_X
 }

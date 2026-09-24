@@ -64,6 +64,7 @@ pub fn run(boot: Boot) {
         std::env::var_os("SLOT2_DEBUG_FRAME").is_some(),
         Screen::List,
     );
+    app.set_gauge(slot2_platform::Gauge::detect());
     eprintln!(
         "slot2: {} carts on the {} shelf",
         app.carts().len(),
