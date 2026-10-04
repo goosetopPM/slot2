@@ -47,6 +47,32 @@ fn card_with(counts: &[(Platform, usize)]) -> (Card, PathBuf) {
     (card, root)
 }
 
+/// An app sitting on `platform`'s shelf with `n` carts on it, and a clock that is safe to start
+/// from. The app boots on the Game Boy Advance shelf, so the ones after it are reached with R1
+/// — the same key the player uses.
+fn app_on(platform: Platform, n: usize, at: Instant) -> (App, PathBuf, Instant) {
+    let (mut a, root) = app(&[(platform, n)]);
+    let mut now = at;
+    for _ in 0..Platform::ALL.len() {
+        if a.platform() == platform {
+            break;
+        }
+        tap(&mut a, Button::R1, now);
+        now += Duration::from_millis(80);
+    }
+    assert_eq!(
+        a.platform(),
+        platform,
+        "never reached the {platform:?} shelf"
+    );
+    // Let the clock settle, so the frame the insert starts on is the same size whatever the
+    // shelf took to reach: a stalled first frame is one the app clamps, and a shelf reached
+    // with R1 has ticked where a fresh app has not.
+    a.tick(now + Duration::from_millis(100));
+    now += Duration::from_millis(100);
+    (a, root, now)
+}
+
 /// An app whose cores directory is empty, so every load fails.
 fn app(counts: &[(Platform, usize)]) -> (App, PathBuf) {
     let (card, root) = card_with(counts);
@@ -163,7 +189,10 @@ fn the_core_is_not_asked_for_until_the_cart_seats() {
     // The quiet window ends where the slot's own clip starts, a lead before the contacts,
     // and not at the seat: past that point an open device is the noise, not the core. What
     // this test is about either way is that nothing has *loaded* on the way down the rails.
-    let quiet = SEATED_AT - Sfx::Insert.lead() - 0.02;
+    // The lead is the one this shelf plays the clip at, because the clip is read at that
+    // platform's speed and the cue is computed from the same one.
+    let profile = slot2_ui::skin::skin(a.platform()).sfx_in;
+    let quiet = SEATED_AT - Sfx::Insert.lead_at_speed(profile.speed()) - 0.02;
     let before = run(&mut a, t + Duration::from_millis(60), quiet);
     assert!(a.take_sink_request().is_none(), "audio opened early");
 
@@ -389,6 +418,179 @@ fn drawing_an_insert_does_not_upload_every_frame() {
         .filter(|o| matches!(o, Op::UploadAlpha8 { .. } | Op::UploadRgba8 { .. }))
         .count();
     assert!(uploads <= 2, "an insert uploaded {uploads} textures");
+}
+
+// ------------------------------------------------------------------ the platform's profile
+
+/// The travelling cart in a frame: the one image drawn at the cartridge's natural size. The
+/// row's neighbours are scaled down and the mouth trim is another shape entirely.
+fn travelling(canvas: &RecordingCanvas, cart: (f32, f32)) -> (f32, f32) {
+    canvas
+        .frame()
+        .iter()
+        .find_map(|o| match o {
+            Op::Image { x, y, w, h, .. }
+                if (w - cart.0).abs() < 0.5 && (h - cart.1).abs() < 0.5 =>
+            {
+                Some((*x, *y))
+            }
+            _ => None,
+        })
+        .expect("no travelling cart in this frame")
+}
+
+/// Where the platform's own profile puts that cart, from the row's line.
+fn on_profile(
+    safe: &slot2_ui::layout::SafeArea,
+    platform: Platform,
+    seat: f32,
+    out: bool,
+) -> (f32, f32) {
+    let s = slot2_ui::skin::skin(platform);
+    let cart = s.cart_size;
+    let rest_x = (safe.panel_w as f32 - cart.0) / 2.0;
+    let curve = if out { s.eject } else { s.insert };
+    let t = slot2_ui::insert::travel(safe, curve, cart, rest_x, seat);
+    (t.x, t.y)
+}
+
+/// How far down the *journey* a position is: 0 on the row, 1 in the slot.
+fn journey(safe: &slot2_ui::layout::SafeArea, cart: (f32, f32), y: f32) -> f32 {
+    let rest = slot2_ui::insert::rest_y(safe, cart.1);
+    (y - rest) / (slot2_ui::insert::seated_y(safe) - rest)
+}
+
+#[test]
+fn the_app_draws_each_direction_on_its_platforms_profile() {
+    let (mut a, _root) = app(&[(Platform::Gba, 4)]);
+    let mut ctx = ui();
+    let safe = ctx.safe;
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let t = Instant::now();
+    tap(&mut a, Button::A, t);
+
+    // Part way in. Whatever the shelf, the cart has to be where that shelf's profile says.
+    let now = run(&mut a, t + Duration::from_millis(60), SEATED_AT * 0.6);
+    assert_eq!(a.screen, Screen::Inserting);
+    a.draw(&mut canvas, &mut ctx, now);
+    let platform = a.platform();
+    let cart = slot2_ui::skin::skin(platform).cart_size;
+    let seat = a.insert_seat().expect("nothing is going in");
+    let want = on_profile(&safe, platform, seat, false);
+    let (x, y) = travelling(&canvas, cart);
+    assert!(
+        (x - want.0).abs() < 0.5 && (y - want.1).abs() < 0.5,
+        "seat {seat}: the cart is at {x},{y} and the {platform:?} insert profile puts it at {want:?}"
+    );
+    // And back out, on the eject profile: the card has no cores, so the load is refused at
+    // the seat and the cart is sent back the other way.
+    let mut now = t + Duration::from_millis(60);
+    for _ in 0..120 {
+        now += Duration::from_micros(16_667);
+        a.tick(now);
+        if a.screen != Screen::Inserting {
+            break;
+        }
+    }
+    assert_eq!(a.screen, Screen::Ejecting, "the cart was never refused");
+    let now = run(&mut a, now, EJECT_S * 0.5);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    a.draw(&mut canvas, &mut ctx, now);
+    let seat = a.insert_seat().expect("nothing is coming out");
+    let want = on_profile(&safe, platform, seat, true);
+    let (x, y) = travelling(&canvas, cart);
+    assert!(
+        (x - want.0).abs() < 0.5 && (y - want.1).abs() < 0.5,
+        "seat {seat}: the cart is at {x},{y} and the {platform:?} eject profile puts it at {want:?}"
+    );
+}
+
+#[test]
+fn two_shelves_travel_their_own_way_to_the_same_seat() {
+    // The same normalized seat on two platforms: each cart is where its own profile puts it,
+    // and the profiles really disagree there. A table that only differed in its fields would
+    // put both carts in the same place.
+    let mut seen: Vec<(f32, f32)> = Vec::new();
+    for platform in [Platform::Gba, Platform::Nes] {
+        let (mut a, _root, t) = app_on(platform, 4, Instant::now());
+        let mut ctx = ui();
+        let safe = ctx.safe;
+        tap(&mut a, Button::A, t);
+        let now = run(&mut a, t + Duration::from_millis(60), SEATED_AT * 0.6);
+        assert_eq!(a.screen, Screen::Inserting);
+        let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+        a.draw(&mut canvas, &mut ctx, now);
+
+        assert_eq!(
+            a.platform(),
+            platform,
+            "the app is not on the shelf it was given"
+        );
+        let cart = slot2_ui::skin::skin(platform).cart_size;
+        let seat = a.insert_seat().expect("nothing is going in");
+        let want = on_profile(&safe, platform, seat, false);
+        let (x, y) = travelling(&canvas, cart);
+        assert!(
+            (x - want.0).abs() < 0.5 && (y - want.1).abs() < 0.5,
+            "{platform:?} is not on its own profile: {x},{y} against {want:?}"
+        );
+        seen.push((seat, journey(&safe, cart, y)));
+    }
+
+    let (seat_a, a_journey) = seen[0];
+    let (seat_b, b_journey) = seen[1];
+    assert!(
+        (seat_a - seat_b).abs() < 1e-4,
+        "the two apps are not at the same seat: {seat_a} and {seat_b}"
+    );
+    assert!(
+        (a_journey - b_journey).abs() > 0.02,
+        "two profiles travel alike at seat {seat_a}: {a_journey} and {b_journey}"
+    );
+}
+
+#[test]
+fn the_clock_is_the_same_on_every_shelf() {
+    // Only the profile is per platform. The animation, the load, the refusal and the clip's
+    // own cue are one clock: two shelves with quite different curves take the same number of
+    // frames to seat the cart and the same number to bring it back out.
+    let mut counted: Vec<(u32, u32)> = Vec::new();
+    for platform in [Platform::Gba, Platform::Nes] {
+        let (mut a, _root, t) = app_on(platform, 4, Instant::now());
+        tap(&mut a, Button::A, t);
+
+        let mut now = t + Duration::from_millis(60);
+        let mut to_seat = 0;
+        for _ in 0..120 {
+            now += Duration::from_micros(16_667);
+            a.tick(now);
+            to_seat += 1;
+            if a.screen != Screen::Inserting {
+                break;
+            }
+        }
+        assert_eq!(a.screen, Screen::Ejecting, "{platform:?}: no refusal");
+
+        let mut to_eject = 0;
+        for _ in 0..120 {
+            now += Duration::from_micros(16_667);
+            a.tick(now);
+            to_eject += 1;
+            if a.screen == Screen::List {
+                break;
+            }
+        }
+        assert_eq!(
+            a.screen,
+            Screen::List,
+            "{platform:?}: the eject never ended"
+        );
+        counted.push((to_seat, to_eject));
+    }
+    assert_eq!(
+        counted[0], counted[1],
+        "the clock moved with the profile: {counted:?}"
+    );
 }
 
 // ------------------------------------------------------------------ with a core

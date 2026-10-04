@@ -3,6 +3,7 @@ use slot2_store::Platform;
 
 use crate::art::ArtCache;
 use crate::face;
+use crate::insert::{Insertion, Motion};
 use crate::layout::SafeArea;
 use crate::shelf::{Shelf, LIP_H, MOUTH_EXTRA, MOUTH_H, SLIT_H};
 use crate::skin;
@@ -12,12 +13,20 @@ const BAND: Color = Color::from_rgb8(0x1E, 0x21, 0x26);
 const LIP: Color = Color::from_rgb8(0x3A, 0x3F, 0x47);
 const SLIT: Color = Color::from_rgb8(0x07, 0x08, 0x0A);
 
+/// Between one shelf hint and the next, and between the line and the slot below it.
+const HINT_GAP: f32 = crate::PX_HINT;
+const HINT_PAD: f32 = 8.0;
+
 #[derive(Default)]
 pub struct ShelfView {
     pub shelf: Shelf,
     cache: ArtCache,
     labels: Vec<Option<std::path::PathBuf>>,
     label_cache: crate::label::LabelCache,
+    /// Whether each cart has a state to go back to, in the row's order. Set with
+    /// `set_resume_available`, for the same reason the labels are: whether a file is there is
+    /// a question for a rescan, not for a frame.
+    resume_available: Vec<bool>,
 }
 
 impl ShelfView {
@@ -32,10 +41,21 @@ impl ShelfView {
         self.labels = labels;
     }
 
+    /// Which carts have a resume state, one entry per cart in the row's order.
+    ///
+    /// Set when the card is scanned, like the labels: the hint under the row says what A will
+    /// do, and asking the filesystem that question once a frame is the sixty-stat-a-second
+    /// the label cache exists to avoid.
+    pub fn set_resume_available(&mut self, flags: Vec<bool>) {
+        self.resume_available = flags;
+    }
+
     /// Draw the row making way, and the chosen cart on its way into the slot.
     ///
-    /// `seat` is `insert::seat_in(t)` on the way in and `insert::seat_out(t)` on the way
-    /// out: this draws a position, not a direction, so one method covers both.
+    /// `at` is `insert::seat_in(t)` on the way in and `insert::seat_out(t)` on the way out,
+    /// with the direction that position is going: this draws a position, not a direction, so
+    /// one method covers both. The direction picks the platform's profile — the caller knows
+    /// the screen, the skin knows the rhythm, and neither has to know both.
     ///
     /// At `seat == 0.0` what comes out must be what [`ShelfView::draw`] draws, because that
     /// is the frame the button was pressed on and nothing has moved yet.
@@ -46,8 +66,9 @@ impl ShelfView {
         safe: &SafeArea,
         platform: Platform,
         titles: &[&str],
-        seat: f32,
+        at: Insertion,
     ) {
+        let Insertion { seat, motion } = at;
         let skin = skin::skin(platform);
         let panel_w = safe.panel_w as f32;
         let panel_h = safe.panel_h as f32;
@@ -59,7 +80,11 @@ impl ShelfView {
         // 1. Back: the bay and the opening.
         self.draw_back(canvas, mouth_x, mouth_w, band_y);
 
-        // 2. Parted row.
+        // 2. What A does, under the row and above the slot — painted before the carts so the
+        // travelling one passes in front of it rather than behind.
+        self.draw_hint(canvas, ctx, safe);
+
+        // 3. Parted row.
         let placements = self.shelf.parted(safe, skin.cart_size, seat);
         let (shell_tex, detail_tex) = self.prepare_textures(canvas, skin);
         self.draw_placements(
@@ -77,7 +102,11 @@ impl ShelfView {
         // not have.
         if seat > 0.0 && !self.shelf.is_empty() {
             let rest_x = self.shelf.rest_x(safe, skin.cart_size);
-            let t = crate::insert::travel(safe, skin.cart_size, rest_x, seat);
+            let curve = match motion {
+                Motion::Insert => skin.insert,
+                Motion::Eject => skin.eject,
+            };
+            let t = crate::insert::travel(safe, curve, skin.cart_size, rest_x, seat);
             self.draw_cart(
                 canvas,
                 ctx,
@@ -97,6 +126,10 @@ impl ShelfView {
 
         // 4. Front: the plastic face of the machine.
         self.draw_front(canvas, panel_w, mouth_x, mouth_w, band_y);
+
+        // 5. And the trim on that face. Last of all: it sits on the band, and the cart on its
+        // way in passes behind it rather than over it.
+        self.draw_port(canvas, skin, panel_w, band_y);
     }
 
     /// Draw the row and the slot it sits above.
@@ -122,7 +155,12 @@ impl ShelfView {
         // 1. Back: the bay and the opening.
         self.draw_back(canvas, mouth_x, mouth_w, band_y);
 
-        // 2. The carts.
+        // 2. What A does. The same line `draw` puts there: seat 0.0 is the frame the button
+        // was pressed on, and a hint that appeared only once the cart had moved would be a
+        // flicker at the start of every launch.
+        self.draw_hint(canvas, ctx, safe);
+
+        // 3. The carts.
         let placements = self.shelf.placements(safe, skin.cart_size);
         let (shell_tex, detail_tex) = self.prepare_textures(canvas, skin);
         self.draw_placements(
@@ -135,8 +173,54 @@ impl ShelfView {
             detail_tex,
         );
 
-        // 3. Front: the plastic face of the machine.
+        // 3. Front: the plastic face of the machine, and the trim on it.
         self.draw_front(canvas, panel_w, mouth_x, mouth_w, band_y);
+        self.draw_port(canvas, skin, panel_w, band_y);
+    }
+
+    /// The line under the row: what the button means for the cart on show.
+    ///
+    /// Nothing on an empty shelf — there is no cart to play — and one line otherwise: A plays,
+    /// or A goes back to where the player left off and a hold starts over.
+    fn draw_hint(&self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, safe: &SafeArea) {
+        if self.shelf.is_empty() {
+            return;
+        }
+        let keys: &[&str] = if self.resume_available.get(self.shelf.selected()) == Some(&true) {
+            &["hint-resume", "hint-new-game"]
+        } else {
+            &["hint-play"]
+        };
+
+        let line_h = ctx.fonts.measure("", crate::PX_HINT).line_height as f32;
+        // Above the slot, like the toast, and never past the safe area: on the square panel
+        // the machine hangs below the layout and a line pinned to the slot would sit off it.
+        let floor = (safe.panel_h as f32 - MOUTH_H).min(safe.py(crate::SAFE_H as f32));
+        let y = floor - HINT_PAD - line_h;
+
+        let widths: Vec<f32> = keys
+            .iter()
+            .map(|key| {
+                let spans = ctx.i18n.spans(key, &[]);
+                face::spans_width(ctx, &spans, crate::PX_HINT)
+            })
+            .collect();
+        let total = widths.iter().sum::<f32>() + HINT_GAP * (keys.len() - 1) as f32;
+        let mut x = safe.centre_x(total);
+
+        for (key, width) in keys.iter().zip(&widths) {
+            let spans = ctx.i18n.spans(key, &[]);
+            crate::draw_spans(
+                canvas,
+                ctx,
+                &spans,
+                crate::PX_HINT,
+                x,
+                y,
+                crate::splash::INK_DIM,
+            );
+            x += width + HINT_GAP;
+        }
     }
 
     fn prepare_textures(
@@ -297,5 +381,29 @@ impl ShelfView {
             BAND,
         );
         canvas.rect(0.0, band_y, panel_w, LIP_H, LIP);
+    }
+
+    /// The trim around the mouth: a drawing per platform, rasterised once and tinted with the
+    /// machine's own lip colour, so it reads as part of the face rather than a sticker on it.
+    ///
+    /// It goes on last — over the band, over the lip and over the carts — and its middle is
+    /// transparent, which is the whole trick: the trim dresses the mouth without covering the
+    /// cartridge standing in it. Drawn at the mouth's own height, centred on the panel, so the
+    /// trim lines up with the slot the carts actually go into.
+    fn draw_port(
+        &mut self,
+        canvas: &mut dyn Canvas,
+        skin: &skin::PlatformSkin,
+        panel_w: f32,
+        band_y: f32,
+    ) {
+        let art_w = skin.port_size.0.round() as u32;
+        let art_h = skin.port_size.1.round() as u32;
+        let Some(tex) = self.cache.mask(canvas, skin.port, art_w, art_h) else {
+            return;
+        };
+        let w = skin.port_size.0;
+        let x = ((panel_w - w) / 2.0).round();
+        canvas.image(tex, x, band_y, w, MOUTH_H, LIP);
     }
 }

@@ -64,9 +64,15 @@ fn faces_upload_once_and_draw_many() {
 fn faces_render_hangul_through_the_lazy_cjk_font() {
     let mut c = RecordingCanvas::new(720, 480);
     let mut ctx = ctx("rgsp", "ko");
+    // Korean names Noto Sans KR as its preferred body font, so it is the chain's first slot
+    // and is registered by path: nothing has read the file yet.
+    assert!(
+        !ctx.fonts.is_loaded(slot2_text::FontId(0)),
+        "the context read the preferred font"
+    );
     let w = face::draw_text(&mut c, &mut ctx, "포켓몬", 24.0, 0.0, 0.0, Color::WHITE);
     assert!(w > 30.0, "{w}");
-    assert!(ctx.fonts.is_loaded(slot2_text::FontId(1)));
+    assert!(ctx.fonts.is_loaded(slot2_text::FontId(0)));
 }
 
 // ---------- spans ----------

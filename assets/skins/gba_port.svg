@@ -1,0 +1,17 @@
+<!--
+  The front trim around the cart slot on a Game Boy Advance shelf, drawn for SLOT2 in 2026 as a
+  geometric redraw: no manufacturer artwork, drawing or photograph was traced or copied, and
+  there is no logo or wordmark in the file. Low wing-shaped trim down each side of the opening
+  with one thin rail across the top is what tells it from the other six.
+
+  White coverage on transparency: `ShelfView` rasterises it, uploads it once and tints it with
+  the machine's lip colour. The opening the cartridge stands in is the empty middle: the top
+  rail crosses the middle of the trim, not the middle of the mouth.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 294 58">
+  <g fill="#fff">
+    <rect x="0" y="0" width="294" height="3"/>
+    <path d="M 0 46 L 12 34 L 20 40 L 20 58 L 0 58 Z"/>
+    <path d="M 294 46 L 282 34 L 274 40 L 274 58 L 294 58 Z"/>
+  </g>
+</svg>

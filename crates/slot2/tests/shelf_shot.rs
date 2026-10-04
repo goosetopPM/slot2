@@ -156,8 +156,17 @@ fn the_shelf_holds_up_on_every_panel() {
         let titles: Vec<&str> = titles.iter().map(|s| s.as_str()).collect();
         for seat in [0.0f32, 0.5, 0.8, 1.0] {
             canvas.clear(slot2_gfx::Color::from_u8(0x12, 0x14, 0x18, 255));
-            app.shelf_view
-                .draw_insert(&mut canvas, &mut ctx, &safe, platform, &titles, seat);
+            app.shelf_view.draw_insert(
+                &mut canvas,
+                &mut ctx,
+                &safe,
+                platform,
+                &titles,
+                slot2_ui::insert::Insertion {
+                    seat,
+                    motion: slot2_ui::insert::Motion::Insert,
+                },
+            );
             let img = canvas.read_back();
             let path = out.join(format!(
                 "insert-{}x{}-{:02}.png",

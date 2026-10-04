@@ -1,0 +1,18 @@
+<!--
+  The NES cartridge, drawn for SLOT2 in 2026 as a geometric redraw: no manufacturer artwork,
+  drawing or photograph was traced or copied, and there is no logo or wordmark in the file.
+  What makes it a NES cart at shelf distance is the proportion (tall, and narrow next to a
+  Super Nintendo cart) with a short shoulder chamfered across the top and a shallower bevel
+  where the connector edge meets the front.
+
+  White silhouette on transparency, like every other file here: this is coverage, and
+  `PlatformSkin::shell` tints it at draw time. The label is not in the file either — the table
+  declares where it goes (`x 20, y 28, 170x142`) and `ShelfView` paints the game's own label
+  or its printed title into that rect.
+
+  The body spans 4..206 across and 4..266 down, so the drawing has a margin inside its 210x270
+  viewBox and the shelf never crops it.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 270">
+  <path d="M 4 16 L 16 4 L 194 4 L 206 16 L 206 258 L 200 266 L 10 266 L 4 258 Z" fill="#fff"/>
+</svg>

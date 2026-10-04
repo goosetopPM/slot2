@@ -1,0 +1,20 @@
+<!--
+  The front trim around the cart slot on a Game Boy Color shelf, drawn for SLOT2 in 2026 as a
+  geometric redraw: no manufacturer artwork, drawing or photograph was traced or copied, and
+  there is no logo or wordmark in the file. A rounded cap against the opening with a pair of
+  short vertical ribs outside it is what tells it from the other six.
+
+  White coverage on transparency: `ShelfView` rasterises it, uploads it once and tints it with
+  the machine's lip colour. Its middle is deliberately empty — that is the opening the
+  cartridge stands in — so only the two 20px trims either side paint.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 294 58">
+  <g fill="#fff">
+    <rect x="9" y="12" width="11" height="34" rx="5.5"/>
+    <rect x="2" y="20" width="3" height="18" rx="1.5"/>
+    <rect x="5.5" y="20" width="3" height="18" rx="1.5"/>
+    <rect x="274" y="12" width="11" height="34" rx="5.5"/>
+    <rect x="285.5" y="20" width="3" height="18" rx="1.5"/>
+    <rect x="289" y="20" width="3" height="18" rx="1.5"/>
+  </g>
+</svg>

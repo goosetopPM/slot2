@@ -1,0 +1,129 @@
+name: release
+
+# The only trigger is a pushed tag: the tag is the version, and nothing here creates one or
+# publishes anything. The build job assembles the same card tree CI assembles, the publish job
+# packages it and creates a *draft* release for the tag that was already pushed. A human reads
+# that draft — with the Task 104 hosted artifact inspection — and decides whether to publish it.
+
+on:
+  push:
+    tags: ['v*']
+
+# Read-only everywhere except the one job that creates the draft.
+permissions:
+  contents: read
+
+# One run per tag, and a second push of the same tag waits instead of cancelling the run that is
+# already assembling the artifact it would publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The same reusable workflow normal CI calls, so the released tree is the tree CI built and the
+  # device assembly exists once. Only the artifact name differs.
+  build:
+    uses: ./.github/workflows/device-artifact.yml
+    with:
+      artifact-name: slot2-release-${{ github.ref_name }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # The only job that may write, and only to releases: the tag is already pushed, so no step
+    # here creates refs, tags, or commits.
+    permissions:
+      contents: write
+    steps:
+      # The exact tagged revision, with the tag and full history present: HEAD is the commit the
+      # packager stamps and the artifact is expected to have been built from.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      # The artifact the build job uploaded, by that exact name. upload-artifact stores the
+      # contents of dist-device, so card-tree/System is the card root the packager is pointed at.
+      - uses: actions/download-artifact@v4
+        with:
+          name: slot2-release-${{ github.ref_name }}
+          path: card-tree
+
+      # The packager re-derives the Rust notice closure from Cargo's own resolution, offline, so
+      # the tagged revision's sources and the device target have to be on this runner too.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+      - name: fetch Cargo sources for the notice check
+        run: |
+          cargo fetch --locked --target aarch64-unknown-linux-gnu
+          cargo fetch --locked
+
+      # The tag is validated here, in the packaging step, and not by a shell pattern: the
+      # packager refuses anything that is not exactly `v` + the workspace version in the tagged
+      # Cargo.toml, an unsafe tag character along with it, and it refuses a commit that is not
+      # 40 hex, a tree whose VERSION.txt does not stamp that version and that commit, and a tree
+      # that is not a complete card. Nothing is written until all of it passes.
+      - name: package the release
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          echo "==> tag $TAG at $commit"
+          pwsh -NoProfile -File build/package-release.ps1 \
+            -CardRoot "$GITHUB_WORKSPACE/card-tree" \
+            -Tag "$TAG" \
+            -Commit "$commit" \
+            -OutputDir "$RUNNER_TEMP/slot2-release"
+
+      # Independent of the packager's own re-read of the sidecar: the digest is recomputed here
+      # and the file has to be exactly "<hash>  <zip name>" and one LF, which is also what
+      # refuses a byte-order mark or a carriage return.
+      - name: verify the sidecar
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          zip="$RUNNER_TEMP/slot2-release/slot2-$TAG.zip"
+          side="$zip.sha256"
+          for f in "$zip" "$side"; do
+            if [ ! -f "$f" ]; then echo "::error::no $f"; exit 1; fi
+          done
+          want="$(sha256sum "$zip" | cut -d' ' -f1)  $(basename "$zip")"
+          got="$(cat "$side")"
+          if [ "$got" != "$want" ]; then
+            echo "::error::the sidecar is not the digest of $zip"
+            printf 'want: %s\ngot:  %s\n' "$want" "$got"
+            exit 1
+          fi
+          if [ "$(stat -c%s "$side")" -ne "$(( ${#want} + 1 ))" ]; then
+            echo "::error::the sidecar is not the digest, two spaces, the name and one LF"
+            exit 1
+          fi
+          echo "==> sidecar verified: $side"
+
+      # A draft for a tag that exists on the remote, and an existing release stops the run before
+      # anything is attached: neither the release nor its assets are ever overwritten. Only the
+      # zip and its sidecar are attached, and the notes are the generated ones. Publishing that
+      # draft is the user's act, not this workflow's.
+      - name: draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/slot2-release"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::a release for $TAG already exists"; exit 1
+          fi
+          gh release create "$TAG" \
+            --draft \
+            --verify-tag \
+            --generate-notes \
+            --title "SLOT2 $TAG" \
+            "$out/slot2-$TAG.zip" "$out/slot2-$TAG.zip.sha256"
+          echo "==> draft release created for $TAG"

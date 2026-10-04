@@ -172,6 +172,94 @@ fn load(platform: Platform) -> Option<Core> {
     )
 }
 
+/// Load one named core for a platform, or `None` with the reason printed when this machine
+/// has no library or no ROM to try it with.
+fn load_alternative(core: slot2_retro::CoreId, platform: Platform) -> Option<Core> {
+    let dylib = repo().join("vendor").join(core.file_name());
+    if !dylib.is_file() {
+        eprintln!(
+            "{} on {}: no {} — run build/cores.ps1",
+            core.base_name(),
+            name(platform),
+            dylib.display()
+        );
+        return None;
+    }
+    let Some((bytes, ext)) = rom_for(platform) else {
+        eprintln!(
+            "{} on {}: no test rom available, skipping",
+            core.base_name(),
+            name(platform)
+        );
+        return None;
+    };
+    let stem = format!("{}-{}", name(platform), core.base_name());
+    let rom = support::write_rom(&stem, ext, &bytes);
+    let env = Env {
+        system_dir: tmp(&format!("{stem}-sys")),
+        save_dir: tmp(&format!("{stem}-save")),
+        options: slot2_retro::options_for_core(core, platform, false, slot2_retro::Tuning::DESKTOP)
+            .unwrap_or_default(),
+        language: 0,
+    };
+    Some(
+        Core::load(&dylib, &rom, env)
+            .unwrap_or_else(|e| panic!("{} refused its test rom: {e}", core.base_name())),
+    )
+}
+
+#[test]
+fn the_alternative_cores_run_their_consoles() {
+    let _serial = serial();
+    // gpSP on GBA has the MIT test ROM in the repository and its host library is built by
+    // `build/cores.ps1 -Core gpsp`, so that one is never skipped. Gambatte needs a ROM with the
+    // Nintendo logo in it, which this suite may not build: `assets/test/local` is asked first,
+    // and without a cartridge there the two Game Boy rows report their own skip.
+    for (core, platform) in [
+        (slot2_retro::CoreId::Gpsp, Platform::Gba),
+        (slot2_retro::CoreId::Gambatte, Platform::Gb),
+        (slot2_retro::CoreId::Gambatte, Platform::Gbc),
+    ] {
+        let case = format!("{} on {}", core.base_name(), name(platform));
+        let Some(mut loaded) = load_alternative(core, platform) else {
+            continue;
+        };
+
+        let av = loaded.av_info();
+        assert!(av.fps > 1.0 && av.fps < 1000.0, "{case}: fps {}", av.fps);
+        for _ in 0..10 {
+            loaded.run();
+        }
+        let frame = loaded
+            .frame()
+            .unwrap_or_else(|| panic!("{case}: drew nothing in ten frames"));
+        assert!(frame.width > 0 && frame.height > 0, "{case}: empty frame");
+        assert_eq!(
+            frame.to_rgba8().len(),
+            (frame.width * frame.height * 4) as usize,
+            "{case}: converted frame is the wrong size"
+        );
+
+        // Rewind and resume states are built on this: a core that cannot serialize cannot
+        // keep either.
+        let state = loaded
+            .serialize()
+            .unwrap_or_else(|e| panic!("{case}: serialize failed: {e}"));
+        assert!(!state.is_empty(), "{case}: empty state");
+        for _ in 0..5 {
+            loaded.run();
+        }
+        loaded
+            .unserialize(&state)
+            .unwrap_or_else(|e| panic!("{case}: unserialize failed: {e}"));
+        loaded.run();
+        assert!(
+            loaded.frame().is_some(),
+            "{case}: no frame after restoring a state"
+        );
+    }
+}
+
 const ALL: [Platform; 7] = [
     Platform::Gb,
     Platform::Gbc,

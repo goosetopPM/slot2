@@ -1,0 +1,261 @@
+name: device-artifact
+
+# The aarch64 card tree, assembled once and called twice: normal CI calls this on every push and
+# pull request, and the tag release calls it to build the artifact a draft release ships. Only
+# the artifact name travels in; the tree, its gates and its shape are the same in both callers,
+# which is the point of the file. It uploads dist-device and writes nothing else, so its
+# permission is read-only and it can never publish or push.
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: The name the assembled dist-device tree is uploaded under.
+        required: true
+        type: string
+
+# The caller's workflow env does not cross into a called workflow, so the two variables the
+# device build reads are set here as well as in ci.yml.
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+jobs:
+  # The real thing: aarch64, glibc 2.31 floor, built in the same container developers use.
+  device:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Rust notice packager runs later in this job on the runner host, in PowerShell and
+      # outside the cross container, and it reads Cargo's resolution offline. So the host gets
+      # the repository's toolchain (rust-toolchain.toml: stable, with the device target) and a
+      # cache for the registry and git sources the fetch below fills. Nothing is taken out of
+      # the container: its Cargo home belongs to the image, and an opaque copy of it is not an
+      # input anyone can reason about.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Sources, not build output: this job builds for aarch64 inside the container, and the
+          # bundles it assembles under target/ are not something to carry between runs.
+          cache-targets: false
+      - name: device target on the host
+        run: rustup target list --installed | grep -qx aarch64-unknown-linux-gnu
+
+      - name: build cross image
+        run: docker build -t slot2-cross -f build/cross.Dockerfile build
+
+      # Cores for the device are a separate build from the host ones above: same pins, same
+      # patches, aarch64. Cached on the pins for the same reason, and read from the same
+      # manifest — and the cache holds both halves of what packaging needs after a hit: the
+      # built cores the card carries, and the pinned checkouts the source bundle is cut from.
+      # A vendor-only cache hits and then fails inside build/package-core-sources.ps1, which
+      # reads target-device/cores/<core>, so target-device/cores is part of the cache too.
+      # The whole target-device tree and the finished bundles are not: those are outputs.
+      - name: cache device cores
+        id: devcores
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor
+            target-device/cores
+          # Keyed as before on the tracked manifest, pins, recipes and patches (all under
+          # cores/**), but versioned: the unversioned key may already name a cache that holds
+          # vendor alone, and a cache that exists is immutable, so it cannot be rewritten into
+          # this shape. v2 is a different cache, and an old one is never accepted as a hit.
+          key: cores-aarch64-v2-${{ hashFiles('cores/**') }}
+      - name: build device cores
+        if: steps.devcores.outputs.cache-hit != 'true'
+        run: |
+          for c in $(tr -d '\r' < cores/required.txt); do
+            echo "::group::$c"
+            docker run --rm -v "$PWD:/src" -w /src slot2-cross \
+              sh "cores/$c/build.sh" build "target-device/cores/$c" "vendor/${c}_libretro.so"
+            echo "::endgroup::"
+          done
+
+      # A cache hit skips the build above, so everything packaging reads is checked on its own:
+      # six cores and six stamps by name, and for each of them the pinned checkout the source
+      # bundle is cut from — the one directory with a .git in it, at most three levels down, the
+      # same rule build/core-manifest.ps1 (Get-CoreCheckout) uses, because mGBA keeps its tree in
+      # mgba/ and the other five in src/ and that detail does not belong in this file either. The
+      # checkout must contain the tracked pin and have it checked out. A stale, partial or
+      # vendor-only cache stops here, naming the core, the path and the pin, rather than halfway
+      # through the packaging step below.
+      - name: core files and checkouts present
+        run: |
+          bad=0
+          for c in $(tr -d '\r' < cores/required.txt); do
+            for f in "vendor/${c}_libretro.so" "vendor/${c}_libretro.so.meta"; do
+              if [ ! -s "$f" ]; then echo "::error::missing or empty: $f"; bad=1; fi
+            done
+            pin=$(cat "cores/$c/commit")
+            base="target-device/cores/$c"
+            if [ ! -d "$base" ]; then
+              echo "::error::$c has no source checkout under $base (tracked pin $pin)"; bad=1
+              continue
+            fi
+            found=$(find "$base" -maxdepth 3 -name .git -printf '%h\n' 2>/dev/null | sort)
+            count=$(printf '%s\n' "$found" | grep -c .)
+            if [ "$count" -ne 1 ]; then
+              echo "::error::$c has $count git checkouts under $base, not one (tracked pin $pin)"; bad=1
+              continue
+            fi
+            if ! git -C "$found" cat-file -e "${pin}^{commit}" 2>/dev/null; then
+              echo "::error::$found does not contain the tracked pin $pin"; bad=1
+              continue
+            fi
+            head=$(git -C "$found" rev-parse HEAD 2>/dev/null)
+            if [ "$head" != "$pin" ]; then
+              echo "::error::$found HEAD is $head, not the tracked pin $pin"; bad=1
+            fi
+          done
+          ls -l vendor/
+          exit "$bad"
+
+      - name: cross build (profile device)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src slot2-cross \
+            sh -c "cargo build --profile device --target aarch64-unknown-linux-gnu --target-dir target-device -p slot2 --no-default-features --features device \
+                   && file target-device/aarch64-unknown-linux-gnu/device/slot2"
+
+      # The card carries the cores' licenses and the source they correspond to, and both come
+      # out of the checkouts the build above left behind. Same script a developer runs, so the
+      # tree here and the tree from build/dist-device.ps1 are the same tree.
+      - name: package core sources
+        run: pwsh -NoProfile -File build/package-core-sources.ps1 -OutputDir "$PWD/target/core-sources"
+
+      # The packager is offline on purpose, so this is what gives it something to read: on a
+      # fresh runner the crate sources are not there until they are fetched. --locked keeps
+      # Cargo.lock as the input it is, so a drifted dependency fails here instead of quietly
+      # changing what the bundle says. The second fetch is the host side of `cargo metadata`:
+      # it resolves the whole workspace, and a member that keeps a host-only feature on pulls
+      # sources that the device target alone does not.
+      - name: fetch Cargo sources for the notice packager
+        run: |
+          cargo fetch --locked --target aarch64-unknown-linux-gnu
+          cargo fetch --locked
+
+      # The Rust runtime's third-party notices come from the Cargo data fetched above and never
+      # from a crate list in this file. The packager refuses to finish unless every runtime
+      # package is accounted for, so a dependency added to the binary without its notice is
+      # caught here rather than on a card.
+      - name: package rust notices
+        run: pwsh -NoProfile -File build/package-rust-notices.ps1 -OutputDir "$PWD/target/rust-notices"
+
+      # Kept in step with build/dist-device.ps1, which is what a developer runs: the same
+      # System/ tree, the same manifest, the same licensing and the same exact-set checks. A
+      # tree without cores boots to an empty shelf and looks like a bug; a tree without the
+      # licenses is not something to publish. Both fail here rather than shipping.
+      - name: assemble card tree
+        run: |
+          out=dist-device
+          mkdir -p "$out/System/Fonts" "$out/System/cores" "$out/System/licenses/fonts" \
+                   "$out/System/licenses/upstream-slot" "$out/System/licenses/cores" \
+                   "$out/System/licenses/sources" "$out/System/licenses/rust"
+          cp target-device/aarch64-unknown-linux-gnu/device/slot2 "$out/System/frontend"
+          cp assets/fonts/*.otf assets/fonts/*.ttf "$out/System/Fonts/"
+          cp assets/fonts/*.txt "$out/System/licenses/fonts/"
+          cp LICENSE "$out/System/licenses/SLOT2-LICENSE"
+          cp CORE-NOTICES.md "$out/System/licenses/CORE-NOTICES.md"
+          cp licenses/upstream-slot/LICENSE "$out/System/licenses/upstream-slot/"
+          cp -R target/core-sources/. "$out/System/licenses/sources/"
+          cp -R target/rust-notices/. "$out/System/licenses/rust/"
+          for c in $(tr -d '\r' < cores/required.txt); do
+            cp "vendor/${c}_libretro.so" "$out/System/cores/"
+            cp "vendor/${c}_libretro.so.meta" "$out/System/licenses/"
+            mkdir -p "$out/System/licenses/cores/$c"
+            cp licenses/cores/$c/* "$out/System/licenses/cores/$c/"
+          done
+          # The same three semantic lines build/dist-device.ps1 writes — version, short commit,
+          # card-copy instruction, frontend path, diagnostic paths — written here as LF and with
+          # no byte-order mark so the two producers agree on the bytes as well as on the meaning.
+          version=$(sed -e 's/\r$//' Cargo.toml | sed -n '/^\[workspace\.package\]/,/^\[/p' | sed -n 's/^version = "\([^"]*\)"$/\1/p' | head -n 1)
+          [ -n "$version" ] || { echo "::error::Cargo.toml names no workspace version"; exit 1; }
+          printf 'SLOT2 %s (%s)\n' "$version" "$(git rev-parse --short HEAD)" > "$out/System/VERSION.txt"
+          printf 'Copy the contents of this folder to the root of the card BaseOS boots a frontend from.\n' >> "$out/System/VERSION.txt"
+          printf 'BaseOS runs System/frontend. Logs: /tmp/frontend.log on the device, System/slot2-diag.txt on the card.\n' >> "$out/System/VERSION.txt"
+          ls -lR "$out"
+
+          # Exactly the manifest, nothing else, in both halves of the cores tree.
+          want=$(sed -e 's/\r$//' -e 's/$/_libretro.so/' cores/required.txt | sort)
+          got=$(cd "$out/System/cores" && ls -1 | sort)
+          if [ "$want" != "$got" ]; then
+            echo "::error::System/cores is not the manifest's list"; diff <(echo "$want") <(echo "$got"); exit 1
+          fi
+          wantmeta=$(sed -e 's/\r$//' -e 's/$/_libretro.so.meta/' cores/required.txt | sort)
+          gotmeta=$(cd "$out/System/licenses" && ls -1 | grep -E '_libretro\.so\.meta$' | sort)
+          if [ "$wantmeta" != "$gotmeta" ]; then
+            echo "::error::System/licenses is not the manifest's list"; diff <(echo "$wantmeta") <(echo "$gotmeta"); exit 1
+          fi
+
+          # The licensing: the notices, six core licenses, six archives, six recipes, mGBA's two
+          # patches, and every hash the manifest records against the file it names.
+          bad=0
+          for f in "$out/System/licenses/SLOT2-LICENSE" "$out/System/licenses/CORE-NOTICES.md" \
+                   "$out/System/licenses/upstream-slot/LICENSE" \
+                   "$out/System/licenses/sources/SOURCE-MANIFEST.txt"; do
+            [ -s "$f" ] || { echo "::error::missing or empty: $f"; bad=1; }
+          done
+          diff -r licenses/cores "$out/System/licenses/sources/licenses" || bad=1
+          diff cores/common.sh "$out/System/licenses/sources/recipes/common.sh" || bad=1
+          for c in $(tr -d '\r' < cores/required.txt); do
+            pin=$(cat "cores/$c/commit")
+            for f in "$out/System/licenses/cores/$c/$(ls licenses/cores/$c)" \
+                     "$out/System/licenses/sources/archives/${c}-${pin}.zip"; do
+              [ -s "$f" ] || { echo "::error::missing or empty: $f"; bad=1; }
+            done
+            diff -r "cores/$c" "$out/System/licenses/sources/recipes/$c" || bad=1
+            want_hash=$(grep -A1 "^archive=archives/${c}-${pin}\.zip$" "$out/System/licenses/sources/SOURCE-MANIFEST.txt" | sed -n 's/^archive_sha256=//p')
+            got_hash=$(sha256sum "$out/System/licenses/sources/archives/${c}-${pin}.zip" | cut -d' ' -f1)
+            if [ "$want_hash" != "$got_hash" ]; then
+              echo "::error::$c archive hash is $got_hash, not the manifest's $want_hash"; bad=1
+            fi
+          done
+          patches=$(ls "$out/System/licenses/sources/recipes/mgba"/*.patch | wc -l)
+          [ "$patches" -eq 2 ] || { echo "::error::mgba has $patches patches in the recipe"; bad=1; }
+
+          # The Rust runtime notices are checked as the tree that is about to be uploaded, not as
+          # the bundle they came from: exact package set, notice status, copied bytes, SBOM fields
+          # and every RUST-MANIFEST.txt hash, against Cargo's own resolution.
+          pwsh -NoProfile -File build/verify-rust-notices.ps1 -Bundle "$PWD/$out/System/licenses/rust" || bad=1
+
+          exit "$bad"
+      # The one file a user reads before copying anything, and the identity the release packager
+      # re-reads (Cargo version, short commit): checked as the uploaded artifact will hold it, not
+      # as it was written, so a BOM or a carriage return cannot ride along unnoticed.
+      - name: version stamp
+        run: |
+          f=dist-device/System/VERSION.txt
+          if [ ! -f "$f" ]; then echo "::error::no $f"; exit 1; fi
+          want=$(sed -e 's/\r$//' Cargo.toml | sed -n '/^\[workspace\.package\]/,/^\[/p' | sed -n 's/^version = "\([^"]*\)"$/\1/p' | head -n 1)
+          [ -n "$want" ] || { echo "::error::Cargo.toml names no workspace version"; exit 1; }
+          sha=$(git rev-parse --short HEAD)
+          bad=0
+          if head -c 3 "$f" | od -An -tx1 | tr -d ' \n' | grep -qx 'efbbbf'; then
+            echo "::error::$f starts with a byte-order mark"; bad=1
+          fi
+          if grep -q $'\r' "$f"; then echo "::error::$f is not LF-only"; bad=1; fi
+          if [ "$(wc -l < "$f")" -ne 3 ]; then echo "::error::$f is not three lines"; bad=1; fi
+          if [ "$(sed -n '1p' "$f")" != "SLOT2 $want ($sha)" ]; then
+            echo "::error::$f does not stamp SLOT2 $want ($sha)"; bad=1
+          fi
+          if ! grep -qxF 'Copy the contents of this folder to the root of the card BaseOS boots a frontend from.' "$f"; then
+            echo "::error::$f does not carry the card-copy instruction"; bad=1
+          fi
+          if ! grep -qxF 'BaseOS runs System/frontend. Logs: /tmp/frontend.log on the device, System/slot2-diag.txt on the card.' "$f"; then
+            echo "::error::$f does not name the frontend and the diagnostic paths"; bad=1
+          fi
+          if [ "$bad" -eq 0 ]; then echo "==> $f: $(cat "$f" | tr '\n' '|')"; fi
+          exit "$bad"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist-device
+          if-no-files-found: error

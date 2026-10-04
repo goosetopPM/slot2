@@ -339,3 +339,45 @@ fn the_declared_sample_rate_is_what_the_core_actually_produces() {
         av.fps
     );
 }
+
+#[test]
+fn cheat_symbols_load_and_frames_keep_running() {
+    let _serial = serial();
+    // `Core::load` resolves both cheat symbols, so a core without them fails to load at all:
+    // reaching this line is already the symbol half of this test.
+    let Some(mut core) = load("cheats") else {
+        return;
+    };
+
+    // A GameShark v1 code in the two-half form the card holds it in. `+` joins the halves and
+    // what the string means is mGBA's parser's business — this host passes it over untouched.
+    let code = "12345678+9ABCDEF0";
+
+    core.reset_cheats();
+    core.set_cheat(0, true, code)
+        .expect("a plain code crosses over");
+    // A disabled entry is still the core's to see: which cheats deserve to be sent is a
+    // policy this layer deliberately does not have.
+    core.set_cheat(1, false, code)
+        .expect("a disabled entry is still forwarded");
+    for _ in 0..5 {
+        core.run();
+    }
+    assert!(core.frame().is_some(), "no frame with cheats set");
+
+    core.reset_cheats();
+    core.run();
+    assert!(
+        core.frame().is_some(),
+        "no frame after the cheats were cleared"
+    );
+
+    // An interior NUL cannot be part of a C string, and is refused before the core is called.
+    let e = core.set_cheat(0, true, "1234\u{0}5678").unwrap_err();
+    assert!(matches!(e, slot2_retro::Error::Game(_)), "{e}");
+    core.run();
+    assert!(
+        core.frame().is_some(),
+        "a refused code left the core unusable"
+    );
+}

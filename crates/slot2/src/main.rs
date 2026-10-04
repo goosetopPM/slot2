@@ -19,8 +19,11 @@ pub struct Boot {
     pub detected: slot2_platform::Detected,
     /// Card root on the device; `SLOT2_ROOT` or `./sdcard` on the host.
     pub root: PathBuf,
-    /// Language code: `SLOT2_LANG`, else `en` (a settings file takes over in M4).
-    pub lang: String,
+    /// The language `SLOT2_LANG` asked for, or `None` when the process has no such variable.
+    ///
+    /// `None` is not "English": it is "ask the card", and the two are told apart all the way to
+    /// the startup that reads the stored language instead.
+    pub lang_override: Option<String>,
 }
 
 pub fn boot() -> Boot {
@@ -41,9 +44,27 @@ pub fn boot() -> Boot {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("sdcard"))
     };
-    let lang = std::env::var("SLOT2_LANG").unwrap_or_else(|_| "en".into());
+    let lang_override = std::env::var_os("SLOT2_LANG").map(|value| match value.into_string() {
+        Ok(code) => code,
+        Err(_) => {
+            // A value this process cannot decode is still an explicit choice rather than an
+            // absence: an empty request fails to load like any other unusable code, and the
+            // built-in English is what runs. Quietly using the card's language instead would
+            // ignore whoever set the variable.
+            eprintln!("slot2: SLOT2_LANG is not valid Unicode; asking for nothing");
+            String::new()
+        }
+    });
+    let utc = slot2_platform::clock::utc_now();
+    // The card has not been read yet — that happens once the backends have the profile, below —
+    // so this line says what was asked for and not what will run. The code is escaped: a language
+    // code is never printed raw, and the environment is never dumped.
+    let lang_log = match &lang_override {
+        Some(code) => format!("{code:?}"),
+        None => "none".to_string(),
+    };
     eprintln!(
-        "slot2: {} backend={backend} target={} panel={} safe_area_at={:?} lid={} sticks={} source={} root={} lang={lang}",
+        "slot2: {} backend={backend} target={} panel={} safe_area_at={:?} lid={} sticks={} source={} root={} lang_override={lang_log} utc_offset_min={} utc_now={utc}",
         env!("CARGO_PKG_VERSION"),
         p.target,
         p.geometry,
@@ -52,12 +73,27 @@ pub fn boot() -> Boot {
         p.has_sticks,
         detected.source,
         root.display(),
+        slot2_platform::clock::utc_offset_min(),
     );
     Boot {
         detected,
         root,
-        lang,
+        lang_override,
     }
+}
+
+/// One line saying which language was asked for and which one is actually running.
+///
+/// Both backends build their context the same way, and both print this once, before the loop: a
+/// card whose pack is missing or broken still boots, and this is where that is visible instead of
+/// silent.
+///
+/// Both codes are escaped — including the effective one. A code is a file stem and nothing here
+/// is promised to be clean: `SLOT2_LANG` may carry control characters, and a pack whose name has
+/// them can load, so the code the context reports can too. A newline in either value would split
+/// this into lines that read as something the frontend never said.
+pub fn announce_language(requested: &str, effective: &str) {
+    eprintln!("slot2: language requested={requested:?} effective={effective:?}");
 }
 
 /// Where the libretro cores live on a card.

@@ -1,0 +1,19 @@
+<!--
+  The Mega Drive cartridge, drawn for SLOT2 in 2026 as a geometric redraw: no manufacturer
+  artwork, drawing or photograph was traced or copied, and there is no logo or wordmark in the
+  file. It is a wide, low shell — wider than it is tall — with rounded top corners, a shallow
+  step across the middle of the top edge, and a short taper inward toward the connector at the
+  bottom. That combination is what keeps it apart from a Super Nintendo cart, whose shoulders
+  curve the whole way down and whose taper is long.
+
+  White silhouette on transparency, like every other file here: this is coverage, and
+  `PlatformSkin::shell` tints it at draw time. The label is not in the file — the table declares
+  where it goes (`x 32, y 34, 186x84`) and `ShelfView` paints the game's own label or its
+  printed title into that rect.
+
+  The body spans 8..242 across and 14..172 down inside its 250x180 viewBox, so every edge keeps
+  a transparent margin and the shelf never crops the drawing.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 180">
+  <path d="M 8 26 L 20 14 L 95 14 L 95 20 L 155 20 L 155 14 L 230 14 L 242 26 L 242 142 L 224 172 L 26 172 L 8 142 Z" fill="#fff"/>
+</svg>

@@ -1,0 +1,18 @@
+<!--
+  The front trim around the cart slot on a Master System shelf, drawn for SLOT2 in 2026 as a
+  geometric redraw: no manufacturer artwork, drawing or photograph was traced or copied, and
+  there is no logo or wordmark in the file. Narrow stepped trim down each side with a short
+  rail along the bottom of it is what tells it from the other six.
+
+  White coverage on transparency: `ShelfView` rasterises it, uploads it once and tints it with
+  the machine's lip colour. The opening the cartridge stands in is the empty middle: the two
+  bottom rails stop well short of the centre so nothing crosses the mouth.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 254 58">
+  <g fill="#fff">
+    <path d="M 0 14 L 11 14 L 11 24 L 6 24 L 6 38 L 11 38 L 11 48 L 0 48 Z"/>
+    <rect x="14" y="50" width="52" height="5" rx="2.5"/>
+    <path d="M 254 14 L 243 14 L 243 24 L 248 24 L 248 38 L 243 38 L 243 48 L 254 48 Z"/>
+    <rect x="188" y="50" width="52" height="5" rx="2.5"/>
+  </g>
+</svg>

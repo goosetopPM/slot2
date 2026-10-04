@@ -1,0 +1,19 @@
+<!--
+  The Master System cartridge, drawn for SLOT2 in 2026 as a geometric redraw: no manufacturer
+  artwork, drawing or photograph was traced or copied, and there is no logo or wordmark in the
+  file. It is taller than it is wide, with its top corners cut back on a short diagonal, straight
+  sides, and a stepped bevel at the bottom where the connector edge is narrower than the body.
+  That proportion and that stepped foot are what keep it apart from a NES cart, which is taller
+  still and ends in a single shallow chamfer.
+
+  White silhouette on transparency, like every other file here: this is coverage, and
+  `PlatformSkin::shell` tints it at draw time. The label is not in the file — the table declares
+  where it goes (`x 24, y 32, 152x118`) and `ShelfView` paints the game's own label or its
+  printed title into that rect.
+
+  The body spans 10..190 across and 10..222 down inside its 200x230 viewBox, so every edge keeps
+  a transparent margin and the shelf never crops the drawing.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 230">
+  <path d="M 10 40 L 10 24 L 24 10 L 176 10 L 190 24 L 190 208 L 182 208 L 182 222 L 18 222 L 18 208 L 10 208 Z" fill="#fff"/>
+</svg>

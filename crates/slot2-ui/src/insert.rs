@@ -32,21 +32,103 @@ pub const EJECT_S: f32 = SEATED_AT;
 /// to clear the frame from where it stands.
 pub const PART: f32 = 130.0;
 
-/// How far into the travel the cart is caught on the lip, as a fraction of the animation.
+/// Which way a cartridge is moving through the slot.
 ///
-/// Fractions of the *animation*, not of the journey, and so the same two numbers for every
-/// cartridge. A pak and a GBA cart do not fall the same distance — the row centres each
-/// cartridge rather than standing them all on one floor — but the beat of the thing belongs
-/// to the slot and not to the cartridge: the catch has to land on the same frame and the
-/// hesitation has to last as long, or one shelf's insert reads as a different mechanism from
-/// another's. What differs between them is speed, which is what ought to differ when one
-/// object has further to go than another in the same time.
-const CATCH_IN: f32 = 0.42;
-const CATCH_OUT: f32 = 0.62;
+/// The two directions have their own profiles — a cartridge is pushed in against the
+/// connector and falls back out of it — and a caller that knows the screen should not have to
+/// remember which field of the skin that is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Motion {
+    Insert,
+    Eject,
+}
 
-/// How far the cart creeps while it is caught. Not zero: a dead stop reads as a dropped
-/// frame, a crawl reads as resistance.
-const CREEP: f32 = 0.03;
+/// Where a cartridge is on its way through the slot: how far in, and which way.
+///
+/// The two belong together. A seat means nothing without its direction — the same 0.5 is a
+/// cartridge on its way down on one profile and one on its way up on the other — so a caller
+/// hands over one value rather than two arguments it could pair wrongly.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Insertion {
+    pub seat: f32,
+    pub motion: Motion,
+}
+
+/// One platform's travel profile: where in the animation the cartridge's foot meets the lip,
+/// where it lets go, and how far it creeps while it is held.
+///
+/// All three are fractions of the *animation*, not of the journey, and the animation's length
+/// is the same everywhere ([`INSERT_S`]): what a platform owns is its rhythm, not its
+/// duration. A pak and a GBA cart do not fall the same distance — the row centres each
+/// cartridge rather than standing them all on one floor — and each platform gives that distance
+/// its own contact and release beat. The shared duration keeps the state-machine clock stable;
+/// these values change only how speed is distributed inside it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Curve {
+    contact: f32,
+    release: f32,
+    creep: f32,
+}
+
+impl Curve {
+    /// The profile with these beats, as fractions of the whole animation.
+    ///
+    /// Bounds are checked where the table is built, so a mistyped platform fails the build
+    /// rather than drawing an insert that stalls or runs backwards.
+    pub const fn new(contact: f32, release: f32, creep: f32) -> Curve {
+        assert!(contact > 0.0, "contact must be after the start");
+        assert!(contact < release, "contact must come before release");
+        assert!(release < 1.0, "release must be before the end");
+        assert!(creep > 0.0, "a dead stop reads as a dropped frame");
+        assert!(creep < 0.08, "the creep is a hesitation, not the push");
+        Curve {
+            contact,
+            release,
+            creep,
+        }
+    }
+
+    /// Where along the animation the foot meets the lip.
+    pub const fn contact(self) -> f32 {
+        self.contact
+    }
+
+    /// Where along the animation the cartridge is pushed through.
+    pub const fn release(self) -> f32 {
+        self.release
+    }
+
+    /// How far the cartridge travels while it is held against the connector.
+    pub const fn creep(self) -> f32 {
+        self.creep
+    }
+
+    /// The fraction of the *journey* covered at `seat`, in three parts: the cart falls to the
+    /// lip, rests on it, then is pushed through and settles.
+    ///
+    /// `collision` is the fraction of the journey at which the foot really meets the lip
+    /// ([`collision_at`]) — derived from the panel and the cartridge, never tuned. A single
+    /// ease covers the same ground but arrives seated without ever having met anything, which
+    /// is what makes it read as a card going down a chute rather than a cartridge going into a
+    /// machine.
+    pub fn journey(self, collision: f32, seat: f32) -> f32 {
+        let seat = seat.clamp(0.0, 1.0);
+        let collision = collision.clamp(0.0, 1.0);
+        // The held phase ends where the push begins; clamped so that a cartridge that had
+        // already met the lip at the end of the journey cannot be dragged backwards.
+        let held = (collision + self.creep).min(1.0);
+
+        if seat < self.contact {
+            collision * ease(seat / self.contact)
+        } else if seat < self.release {
+            let through = (seat - self.contact) / (self.release - self.contact);
+            collision + (held - collision) * through
+        } else {
+            let settle = (seat - self.release) / (1.0 - self.release);
+            held + (1.0 - held) * ease(settle)
+        }
+    }
+}
 
 /// How far below the lip the cart's *top* edge comes to rest.
 ///
@@ -99,46 +181,29 @@ pub fn seated_y(safe: &SafeArea) -> f32 {
     safe.panel_h as f32 - MOUTH_H + LIP_H + SEATED_BELOW_LIP
 }
 
-/// How far into the travel the cart's foot meets the lip.
+/// How far into the travel the cart's foot meets the lip, as a fraction of the journey.
 ///
 /// Derived rather than tuned, because the catch is a collision: it happens where the foot
 /// meets the lip and nowhere else, whatever that works out to in animation time. The
 /// numerator is the drop from where the cart stands to where its foot lands; the denominator
-/// is the whole journey.
-fn catch_at(safe: &SafeArea, h: f32) -> f32 {
+/// is the whole journey. Every platform's [`Curve`] is then sampled against this same number,
+/// which is why two shelves with different rhythms still seat the cartridge in the slot.
+pub fn collision_at(safe: &SafeArea, h: f32) -> f32 {
     let lip_y = safe.panel_h as f32 - MOUTH_H;
     let rest_y = rest_y(safe, h);
     let seated_y = seated_y(safe);
     (lip_y - (rest_y + h)) / (seated_y - rest_y)
 }
 
-/// The fraction of the journey covered at `seat`, in three parts: the cart falls to the lip,
-/// rests on it, then is pushed through and settles. A single ease covers the same ground but
-/// arrives seated without ever having met anything, which is what makes it read as a card
-/// going down a chute rather than a cartridge going into a machine.
-fn journey(safe: &SafeArea, h: f32, seat: f32) -> f32 {
-    let seat = seat.clamp(0.0, 1.0);
-    let catch = catch_at(safe, h);
-
-    if seat < CATCH_IN {
-        catch * ease(seat / CATCH_IN)
-    } else if seat < CATCH_OUT {
-        catch + CREEP * (seat - CATCH_IN) / (CATCH_OUT - CATCH_IN)
-    } else {
-        let c = catch + CREEP;
-        c + (1.0 - c) * ease((seat - CATCH_OUT) / (1.0 - CATCH_OUT))
-    }
-}
-
-/// Where the cart is at `seat`.
+/// Where the cart is at `seat`, on the platform's own profile.
 ///
 /// `rest_x` is where the row would draw it, asked of the row rather than assumed to be the
 /// middle of the panel: pressing A while the row is still sliding must not teleport the cart
 /// to the centre on that frame. `cart` is the cartridge's natural size — a cart is an object
 /// and goes into the slot at the size it is.
-pub fn travel(safe: &SafeArea, cart: (f32, f32), rest_x: f32, seat: f32) -> Travel {
+pub fn travel(safe: &SafeArea, curve: Curve, cart: (f32, f32), rest_x: f32, seat: f32) -> Travel {
     let (w, h) = cart;
-    let j = journey(safe, h, seat);
+    let j = curve.journey(collision_at(safe, h), seat);
     let centred_x = (safe.panel_w as f32 - w) / 2.0;
     let seated_y = seated_y(safe);
     let rest_y = rest_y(safe, h);

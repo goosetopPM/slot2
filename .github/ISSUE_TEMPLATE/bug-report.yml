@@ -1,0 +1,183 @@
+name: Bug report / 버그 신고
+description: "Something in SLOT2 is broken or behaves wrongly. / SLOT2가 깨지거나 잘못 동작합니다."
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. / 시간을 내어 알려 주셔서 고맙습니다.
+
+        SLOT2 is pre-release. There is no public release to compare against and no support service,
+        so please do not wait for a release build before reporting. A report here does not by itself
+        change what the compatibility table says. / SLOT2는 공개 전입니다. 비교할 공개 릴리스와 지원
+        서비스가 없으니 릴리스 빌드를 기다리지 마시고 알려 주십시오. 이 보고만으로 호환성 표가 바뀌지는
+        않습니다.
+
+        **Never paste or attach** ROMs, BIOS files, copyrighted game assets, save files holding
+        personal data, API keys, credentials, complete unredacted logs, card images, or anything with
+        usernames, local paths, network details, serials or secrets still in it. Screenshots are
+        optional, and must not show game content you have no right to share. / **붙여 넣지 마십시오**:
+        ROM, BIOS 파일, 저작권이 있는 게임 자산, 개인 정보가 담긴 세이브 파일, API 키·자격 증명, 검토하지
+        않은 전체 로그, 카드 이미지, 그리고 사용자 이름·로컬 경로·네트워크 정보·시리얼·비밀이 남아 있는
+        내용입니다. 스크린샷은 선택이며, 공유할 권리가 없는 게임 화면은 담지 마십시오.
+  - type: input
+    id: build
+    attributes:
+      label: "SLOT2 build / SLOT2 빌드"
+      description: "The build line from the About sticker or the first line of `System/VERSION.txt`. Write `unknown` if you cannot read it — there is no public release, so `unknown` is a normal answer. / About 화면이나 `System/VERSION.txt` 첫 줄의 빌드 정보입니다. 확인할 수 없으면 `unknown`이라고 적어 주십시오. 아직 공개 릴리스가 없으므로 `unknown`도 정상입니다."
+      placeholder: "SLOT2 0.1.0 (abc1234) — or unknown"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: "Device / 기기"
+      description: "The exact device name, as printed on the case or shown in About. / 기기 겉면이나 About 화면에 나오는 정확한 이름입니다."
+      placeholder: "RG SP"
+    validations:
+      required: true
+  - type: input
+    id: baseos-target
+    attributes:
+      label: "BASEOS_TARGET / 기기 식별자"
+      description: "The value in `/etc/baseos-release` or the boot log. Write `unknown` if you cannot read it. / `/etc/baseos-release` 또는 부팅 로그의 값입니다. 읽을 수 없으면 `unknown`이라고 적어 주십시오."
+      placeholder: "rgsp"
+    validations:
+      required: true
+  - type: input
+    id: baseos-version
+    attributes:
+      label: "BaseOS version / BaseOS 버전"
+      description: "Only if you know it. Write `unknown` otherwise. / 아는 경우에만 적고, 모르면 `unknown`이라고 적어 주십시오."
+      placeholder: "unknown"
+    validations:
+      required: false
+  - type: dropdown
+    id: card-setup
+    attributes:
+      label: "Card setup / 카드 구성"
+      description: "How SLOT2 is installed on your cards. / 카드에 SLOT2를 어떻게 설치했는지 알려 주십시오."
+      options:
+        - "One card — BaseOS and SLOT2 both on TF1 / 카드 한 장 (TF1에 BaseOS와 SLOT2)"
+        - "Two cards — BaseOS on TF1, SLOT2 and ROMs on TF2 / 카드 두 장 (TF1 BaseOS, TF2 SLOT2)"
+        - "Not sure / 모름"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: "Platform / 플랫폼"
+      description: "Where the problem shows up. / 문제가 나타나는 플랫폼입니다."
+      options:
+        - GB
+        - GBC
+        - GBA
+        - NES
+        - SNES
+        - MD
+        - SMS
+        - "Not platform-specific / 플랫폼과 무관"
+    validations:
+      required: true
+  - type: dropdown
+    id: core
+    attributes:
+      label: "Core / 코어"
+      description: "The core this game is running with, from the in-game Core row. / 게임 중 메뉴의 코어 행에서 확인한 코어입니다."
+      options:
+        - mGBA
+        - Gambatte
+        - gpSP
+        - FCEUmm
+        - Snes9x
+        - "Genesis Plus GX"
+        - "Not sure / 모름"
+        - "Not platform-specific / 플랫폼과 무관"
+    validations:
+      required: true
+  - type: dropdown
+    id: alternate-core
+    attributes:
+      label: "Also with the alternate core? / 대체 코어에서도 같은가요?"
+      description: "Only some platforms have a second core (GB, GBC, GBA). Nothing here is required to have one. / 두 번째 코어가 있는 플랫폼은 GB, GBC, GBA뿐입니다. 코어가 하나뿐이어도 문제없습니다."
+      options:
+        - "Yes — it also happens with the alternate core / 대체 코어에서도 같습니다"
+        - "No — only with the selected core / 선택한 코어에서만 나타납니다"
+        - "Not applicable — that platform has one core / 해당 없음 (코어가 하나뿐)"
+        - "Not tried / 시도하지 않았습니다"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: "What is wrong / 무엇이 잘못되었나요"
+      description: "A short description of the problem, in your own words. / 문제를 간단히 설명해 주십시오."
+      placeholder: "The shelf shows no carts although the ROMs are on the card."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce / 재현 방법"
+      description: "The exact steps you took, from power-on to the problem, including what you pressed. / 전원을 켠 뒤 문제가 나타날 때까지 실제로 한 동작을 순서대로 적어 주십시오."
+      placeholder: |
+        1. Power on with the card inserted
+        2. Open the GB shelf with L1/R1
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior / 기대한 동작"
+      description: "What you expected to happen instead. / 대신 어떻게 동작할 것으로 기대했는지 적어 주십시오."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Actual behavior / 실제 동작"
+      description: "What actually happened, including any message on screen. / 실제로 일어난 일과 화면에 나온 메시지를 적어 주십시오."
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: "Reproducibility / 재현 빈도"
+      description: "How often the problem comes back when you repeat the steps. / 같은 방법을 반복했을 때 문제가 얼마나 자주 나타나는지 알려 주십시오."
+      options:
+        - "Every time / 항상"
+        - "Often / 자주"
+        - "Sometimes / 가끔"
+        - "Once only / 한 번만"
+        - "Not sure / 모름"
+    validations:
+      required: true
+  - type: textarea
+    id: log-excerpt
+    attributes:
+      label: "Smallest relevant log excerpt / 가장 작은 관련 로그 일부"
+      description: |
+        Paste only the few lines that show the problem, from `/tmp/frontend.log` (volatile, on the
+        device: it is wiped on the next boot, so copy it first) and/or `System/slot2-diag.txt` (on
+        the card, readable in a card reader).
+        Do not paste a complete, unreviewed log. Remove usernames, local paths, network details,
+        serials and any secret first, and leave the excerpt out entirely if you cannot redact it.
+        / `/tmp/frontend.log`(기기에서 휘발성이라 재부팅하면 사라지므로 먼저 복사)나
+        `System/slot2-diag.txt`(카드에 있어 카드 리더로 읽을 수 있음)에서 문제를 보여 주는 몇 줄만
+        붙여 주십시오. 검토하지 않은 전체 로그는 붙여 넣지 말고, 사용자 이름·로컬 경로·네트워크 정보·
+        시리얼·비밀을 먼저 지워 주십시오. 지울 수 없다면 이 칸은 비워 두셔도 됩니다.
+      placeholder: "slot2: ..."
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Before submitting / 제출 전 확인"
+      options:
+        - label: "I searched the existing issues and this is not already reported. / 기존 이슈를 검색했고 같은 문제가 없습니다."
+          required: true
+        - label: "I removed usernames, local paths, network details, serials and secrets from everything I paste. / 붙여 넣는 모든 내용에서 사용자 이름·로컬 경로·네트워크 정보·시리얼·비밀을 지웠습니다."
+          required: true
+        - label: "I am not attaching ROMs, BIOS files, copyrighted game assets, or screenshots of game content I may not share. / ROM·BIOS 파일·저작권이 있는 게임 자산, 공유 권한이 없는 게임 화면을 첨부하지 않았습니다."
+          required: true

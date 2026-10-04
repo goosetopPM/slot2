@@ -13,6 +13,11 @@
 #   CORE_MAKEFILE   makefile name (default "Makefile.libretro")
 #   CORE_MAKE_ARGS  anything else to put on the make command line (optional)
 #
+# The stamp records all of it — repo, pin, target, make directory and file, the extra make
+# arguments, the triple and the patch hashes — so a `.meta` that matches cannot belong to a
+# core built another way. Comparing the pin alone would call a core current after the flags
+# that make it run on the device were changed.
+#
 # The interface is the same as cores/mgba/build.sh:
 #
 #   build.sh stamp                      print what a build would record (.meta)
@@ -47,8 +52,13 @@ sha256() {
 }
 
 stamp() {
+	echo "repo=$CORE_REPO"
 	echo "commit=$commit"
 	echo "source=$CORE_REPO/tree/$commit"
+	echo "target=$CORE_TARGET"
+	echo "make_dir=$CORE_MAKE_DIR"
+	echo "makefile=$CORE_MAKEFILE"
+	echo "make_args=$CORE_MAKE_ARGS"
 	echo "triple=$triple"
 	echo "device_cflags=$device_cflags"
 	for p in "$here"/*.patch; do

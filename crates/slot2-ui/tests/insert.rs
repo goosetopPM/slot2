@@ -9,14 +9,25 @@ use slot2_gfx::{Op, RecordingCanvas};
 use slot2_platform::{detect, Geometry};
 use slot2_store::Platform;
 use slot2_ui::insert::{
-    self, seat_in, seat_out, travel, Travel, EJECT_S, INSERT_HOLD_S, INSERT_S, SEATED_AT,
+    self, collision_at, seat_in, seat_out, travel, Curve, Insertion, Motion, Travel, EJECT_S,
+    INSERT_HOLD_S, INSERT_S, SEATED_AT,
 };
 use slot2_ui::layout::SafeArea;
 use slot2_ui::shelf::{Shelf, MOUTH_H};
 use slot2_ui::shelf_view::ShelfView;
-use slot2_ui::{skin, UiCtx};
+use slot2_ui::{skin, svg, UiCtx};
 
 const GEOMETRIES: [Geometry; 3] = [Geometry::W640H480, Geometry::W720H480, Geometry::W720H720];
+
+const PLATFORMS: [Platform; 7] = [
+    Platform::Gb,
+    Platform::Gbc,
+    Platform::Gba,
+    Platform::Nes,
+    Platform::Snes,
+    Platform::Md,
+    Platform::Sms,
+];
 
 /// The frames of an insert, at the rate the loop actually runs.
 const STEPS: usize = 44; // 0.73 s at 60 Hz
@@ -42,11 +53,37 @@ fn cart_of(p: Platform) -> (f32, f32) {
     skin::skin(p).cart_size
 }
 
+/// Where a frame draws the port trim: its op index and its rect. The trim is the image as
+/// tall as the mouth and as wide as the table says, which nothing else on the shelf is.
+fn port_at(ops: &[Op], p: Platform) -> Option<(usize, f32, f32, f32, f32)> {
+    let want = skin::skin(p).port_size;
+    ops.iter().enumerate().find_map(|(i, o)| match o {
+        Op::Image { x, y, w, h, .. } if (w - want.0).abs() < 0.5 && (h - MOUTH_H).abs() < 0.5 => {
+            Some((i, *x, *y, *w, *h))
+        }
+        _ => None,
+    })
+}
+
 /// Where the travel puts a cart at `seat`, on a row that is at rest.
 fn at(safe: &SafeArea, p: Platform, seat: f32) -> Travel {
+    at_motion(safe, p, Motion::Insert, seat)
+}
+
+/// Where the platform's own profile puts the cart at `seat`, going `motion`'s way.
+fn at_motion(safe: &SafeArea, p: Platform, motion: Motion, seat: f32) -> Travel {
     let cart = cart_of(p);
     let rest_x = (safe.panel_w as f32 - cart.0) / 2.0;
-    travel(safe, cart, rest_x, seat)
+    travel(safe, curve_of(p, motion), cart, rest_x, seat)
+}
+
+/// The profile one platform uses for one direction.
+fn curve_of(p: Platform, motion: Motion) -> Curve {
+    let s = skin::skin(p);
+    match motion {
+        Motion::Insert => s.insert,
+        Motion::Eject => s.eject,
+    }
 }
 
 // ---------------------------------------------------------------- the clock
@@ -270,13 +307,25 @@ fn a_cart_that_starts_off_centre_arrives_centred() {
     let safe = SafeArea::for_geometry(Geometry::W720H480);
     let cart = cart_of(Platform::Gba);
     let rest_x = 40.0;
-    let start = travel(&safe, cart, rest_x, 0.0);
+    let start = travel(
+        &safe,
+        curve_of(Platform::Gba, Motion::Insert),
+        cart,
+        rest_x,
+        0.0,
+    );
     assert!(
         (start.x - rest_x).abs() < 0.5,
         "it jumped on the first frame"
     );
 
-    let end = travel(&safe, cart, rest_x, 1.0);
+    let end = travel(
+        &safe,
+        curve_of(Platform::Gba, Motion::Insert),
+        cart,
+        rest_x,
+        1.0,
+    );
     assert!(
         (end.x + end.w / 2.0 - safe.panel_w as f32 / 2.0).abs() < 1.0,
         "it arrived at {} instead of the mouth",
@@ -285,9 +334,230 @@ fn a_cart_that_starts_off_centre_arrives_centred() {
 
     let mut last = rest_x;
     for i in 0..=STEPS {
-        let x = travel(&safe, cart, rest_x, i as f32 / STEPS as f32).x;
+        let x = travel(
+            &safe,
+            curve_of(Platform::Gba, Motion::Insert),
+            cart,
+            rest_x,
+            i as f32 / STEPS as f32,
+        )
+        .x;
         assert!(x >= last - 0.01, "it slid back to {x} from {last}");
         last = x;
+    }
+}
+
+// ---------------------------------------------------------------- the profiles
+
+#[test]
+fn every_platform_profile_walks_the_whole_journey() {
+    // All fourteen profiles, on the cart each belongs to, end to end: the row, the slot, and a
+    // monotonic walk between them with nothing outside the range.
+    for p in PLATFORMS {
+        let cart = cart_of(p);
+        for motion in [Motion::Insert, Motion::Eject] {
+            let curve = curve_of(p, motion);
+            for g in GEOMETRIES {
+                let safe = SafeArea::for_geometry(g);
+                let collision = collision_at(&safe, cart.1);
+                assert!(
+                    collision > 0.0 && collision < 1.0,
+                    "{g:?} {p:?}: the lip is {collision} of the way down"
+                );
+
+                let mut last = f32::NEG_INFINITY;
+                for i in 0..=100 {
+                    let seat = i as f32 / 100.0;
+                    let j = curve.journey(collision, seat);
+                    assert!(
+                        j.is_finite() && (0.0..=1.0).contains(&j),
+                        "{g:?} {p:?} {motion:?} at {seat}: {j}"
+                    );
+                    assert!(
+                        j >= last - 1e-5,
+                        "{g:?} {p:?} {motion:?}: the journey went backwards at {seat}"
+                    );
+                    last = j;
+                }
+                assert!(
+                    curve.journey(collision, 0.0).abs() < 1e-6,
+                    "{p:?} {motion:?}: seat 0 is not the row"
+                );
+                assert!(
+                    (curve.journey(collision, 1.0) - 1.0).abs() < 1e-6,
+                    "{p:?} {motion:?}: seat 1 is not the slot"
+                );
+            }
+
+            // Out of range clamps, the way `seat_in` and `seat_out` do.
+            let safe = SafeArea::for_geometry(Geometry::W720H480);
+            let collision = collision_at(&safe, cart.1);
+            assert!(
+                curve.journey(collision, -3.0).abs() < 1e-6,
+                "{p:?} {motion:?}"
+            );
+            assert!(
+                (curve.journey(collision, 7.0) - 1.0).abs() < 1e-6,
+                "{p:?} {motion:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_platform_profile_meets_the_lip_and_hesitates_on_it() {
+    // The catch is a collision, not a beat sheet: at each platform's contact the foot is on the
+    // lip itself, whatever the profile's timing is. And past that the cart moves — a dead stop
+    // reads as a dropped frame — but far less than it does either side of it.
+    let safe = SafeArea::for_geometry(Geometry::W720H480);
+    let lip = safe.panel_h as f32 - MOUTH_H;
+    for p in PLATFORMS {
+        let cart = cart_of(p);
+        for motion in [Motion::Insert, Motion::Eject] {
+            let curve = curve_of(p, motion);
+            let contact = curve.contact();
+            let release = curve.release();
+            let at = travel(&safe, curve, cart, 0.0, contact);
+            assert!(
+                (at.y + at.h - lip).abs() < 0.5,
+                "{p:?} {motion:?}: the foot meets {} where the lip is {lip}",
+                at.y + at.h
+            );
+
+            let step = |seat: f32| {
+                let a = travel(&safe, curve, cart, 0.0, seat).y;
+                let b = travel(&safe, curve, cart, 0.0, seat + 0.01).y;
+                (b - a).abs()
+            };
+            let caught = step((contact + release) / 2.0);
+            assert!(
+                caught > 0.0,
+                "{p:?} {motion:?}: the cart is dead still on the lip"
+            );
+            // Inside the fall and inside the push, so what is compared with is the fastest
+            // hundredth of a second in each, not the ends of the easing.
+            let fall = (1..=9)
+                .map(|i| step(contact * i as f32 / 10.0))
+                .fold(0.0, f32::max);
+            let push = (1..=9)
+                .map(|i| step(release + (1.0 - release) * i as f32 / 10.0))
+                .fold(0.0, f32::max);
+            assert!(
+                caught * 3.0 < fall && caught * 3.0 < push,
+                "{p:?} {motion:?}: caught {caught} against a fall of {fall} and a push of {push}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_profiles_do_not_travel_alike() {
+    // Field values differing is not enough: two shelves whose curves put the cart in the same
+    // place at the same moments are one curve with a comment on it. Compared at one shared
+    // collision fraction, so this measures rhythm and not cartridge weight.
+    let collision = 0.4;
+    for motion in [Motion::Insert, Motion::Eject] {
+        let samples: Vec<(Platform, [f32; 3])> = PLATFORMS
+            .iter()
+            .map(|p| {
+                let curve = curve_of(*p, motion);
+                (
+                    *p,
+                    [0.25f32, 0.5, 0.75].map(|seat| curve.journey(collision, seat)),
+                )
+            })
+            .collect();
+        for (i, (p, a)) in samples.iter().enumerate() {
+            for (q, b) in &samples[i + 1..] {
+                assert!(
+                    (0..3).any(|k| (a[k] - b[k]).abs() > 0.005),
+                    "{p:?} and {q:?} travel alike on {motion:?}: {a:?} against {b:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_profile_starts_on_the_row_and_ends_in_the_slot() {
+    for p in PLATFORMS {
+        let cart = cart_of(p);
+        let mut row = Shelf::new(2);
+        row.set_len(2);
+        for motion in [Motion::Insert, Motion::Eject] {
+            let curve = curve_of(p, motion);
+            for g in GEOMETRIES {
+                let safe = SafeArea::for_geometry(g);
+                let rest_x = (safe.panel_w as f32 - cart.0) / 2.0;
+                let start = travel(&safe, curve, cart, rest_x, 0.0);
+                let end = travel(&safe, curve, cart, rest_x, 1.0);
+
+                // The row's own line, asked of the row rather than restated here.
+                let placed = row
+                    .placements(&safe, cart)
+                    .into_iter()
+                    .find(|pl| pl.index == row.selected())
+                    .expect("the row did not draw its selection");
+                assert!(
+                    (start.x - placed.x).abs() < 0.5 && (start.y - placed.y).abs() < 0.5,
+                    "{g:?} {p:?} {motion:?}: seat 0 is at {},{} where the row is at {},{}",
+                    start.x,
+                    start.y,
+                    placed.x,
+                    placed.y
+                );
+                assert_eq!((start.w, start.h), cart);
+                assert!(
+                    (end.y - insert::seated_y(&safe)).abs() < 0.5,
+                    "{g:?} {p:?} {motion:?}: seat 1 is at {} not {}",
+                    end.y,
+                    insert::seated_y(&safe)
+                );
+                assert!(
+                    (end.x + end.w / 2.0 - safe.panel_w as f32 / 2.0).abs() < 1.0,
+                    "{g:?} {p:?} {motion:?}: seat 1 is not centred"
+                );
+
+                // And the frames between them: down on the way in, up on the way out, never
+                // the other way on either.
+                let seats: Vec<f32> = match motion {
+                    Motion::Insert => (0..=STEPS).map(|i| i as f32 / STEPS as f32).collect(),
+                    Motion::Eject => (0..=STEPS).rev().map(|i| i as f32 / STEPS as f32).collect(),
+                };
+                let mut last = travel(&safe, curve, cart, rest_x, seats[0]).y;
+                for (i, seat) in seats.iter().enumerate().skip(1) {
+                    let y = travel(&safe, curve, cart, rest_x, *seat).y;
+                    assert!(y.is_finite(), "{g:?} {p:?} {motion:?} frame {i}: {y}");
+                    assert!(
+                        (y - last).abs() < 0.01 || (motion == Motion::Insert) == (y > last),
+                        "{g:?} {p:?} {motion:?}: frame {i} moved the wrong way, {last} to {y}"
+                    );
+                    last = y;
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_insert_and_an_eject_meet_in_the_slot() {
+    // The refusal frame: `Inserting` ends at the seat and `Ejecting` begins there on the other
+    // profile. Both profiles have to put the cart in the same place or it jumps that frame.
+    for p in PLATFORMS {
+        let cart = cart_of(p);
+        for g in GEOMETRIES {
+            let safe = SafeArea::for_geometry(g);
+            let rest_x = (safe.panel_w as f32 - cart.0) / 2.0;
+            let in_ = travel(&safe, curve_of(p, Motion::Insert), cart, rest_x, 1.0);
+            let out = travel(&safe, curve_of(p, Motion::Eject), cart, rest_x, 1.0);
+            assert!(
+                (in_.x - out.x).abs() < 0.01
+                    && (in_.y - out.y).abs() < 0.01
+                    && (in_.w - out.w).abs() < 0.01
+                    && (in_.h - out.h).abs() < 0.01,
+                "{g:?} {p:?}: the cart jumps when it is refused: {in_:?} to {out:?}"
+            );
+        }
     }
 }
 
@@ -310,7 +580,17 @@ fn the_resting_insert_is_the_resting_shelf() {
     insert_view.shelf.set_len(4);
     let mut b = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
-    insert_view.draw_insert(&mut b, &mut c, &safe, Platform::Gba, &t, 0.0);
+    insert_view.draw_insert(
+        &mut b,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &t,
+        Insertion {
+            seat: 0.0,
+            motion: Motion::Insert,
+        },
+    );
 
     let mut want = images(&a);
     let mut got = images(&b);
@@ -347,7 +627,17 @@ fn one_cart_is_on_screen_once() {
         v.shelf.set_len(5);
         let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
         let mut c = ctx();
-        v.draw_insert(&mut canvas, &mut c, &safe, Platform::Gba, &t, seat);
+        v.draw_insert(
+            &mut canvas,
+            &mut c,
+            &safe,
+            Platform::Gba,
+            &t,
+            Insertion {
+                seat,
+                motion: Motion::Insert,
+            },
+        );
 
         // The cart at its full natural size is the one going in; the row's neighbours are
         // drawn smaller. Exactly one full-size cartridge may be on screen.
@@ -438,7 +728,17 @@ fn the_cart_goes_behind_the_slot_not_over_it() {
     v.shelf.set_len(3);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
-    v.draw_insert(&mut canvas, &mut c, &safe, Platform::Gba, &t, 1.0);
+    v.draw_insert(
+        &mut canvas,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &t,
+        Insertion {
+            seat: 1.0,
+            motion: Motion::Insert,
+        },
+    );
 
     let band = safe.panel_h as f32 - MOUTH_H;
     let last_cart = canvas
@@ -472,7 +772,17 @@ fn a_seated_cart_is_still_visible_in_the_mouth() {
     v.shelf.set_len(3);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
-    v.draw_insert(&mut canvas, &mut c, &safe, Platform::Gba, &t, 1.0);
+    v.draw_insert(
+        &mut canvas,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &t,
+        Insertion {
+            seat: 1.0,
+            motion: Motion::Insert,
+        },
+    );
 
     let band = safe.panel_h as f32 - MOUTH_H;
     let cart = canvas
@@ -505,7 +815,17 @@ fn nothing_leaves_the_panel_sideways() {
             v.shelf.set_len(6);
             let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
             let mut c = ctx();
-            v.draw_insert(&mut canvas, &mut c, &safe, Platform::Gba, &t, seat);
+            v.draw_insert(
+                &mut canvas,
+                &mut c,
+                &safe,
+                Platform::Gba,
+                &t,
+                Insertion {
+                    seat,
+                    motion: Motion::Insert,
+                },
+            );
             for (x, y, w, h, a) in images(&canvas) {
                 for val in [x, y, w, h, a] {
                     assert!(val.is_finite(), "{g:?} seat {seat}: {x},{y} {w}x{h} a{a}");
@@ -535,7 +855,17 @@ fn the_whole_animation_uploads_nothing() {
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
 
-    v.draw_insert(&mut canvas, &mut c, &safe, Platform::Gba, &t, 0.0);
+    v.draw_insert(
+        &mut canvas,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &t,
+        Insertion {
+            seat: 0.0,
+            motion: Motion::Insert,
+        },
+    );
     let warm = canvas.ops.len();
 
     for i in 1..=STEPS {
@@ -545,7 +875,10 @@ fn the_whole_animation_uploads_nothing() {
             &safe,
             Platform::Gba,
             &t,
-            i as f32 / STEPS as f32,
+            Insertion {
+                seat: i as f32 / STEPS as f32,
+                motion: Motion::Insert,
+            },
         );
     }
     let uploads = canvas
@@ -572,12 +905,145 @@ fn a_row_of_one_still_inserts() {
             &safe,
             Platform::Gb,
             &["Only"],
-            i as f32 / STEPS as f32,
+            Insertion {
+                seat: i as f32 / STEPS as f32,
+                motion: Motion::Insert,
+            },
         );
         assert!(
             !images(&canvas).is_empty(),
             "frame {i} of a one-cart insert drew no cart"
         );
+    }
+}
+
+#[test]
+fn the_port_trim_is_drawn_after_the_cart_going_in() {
+    // The trim is on the front of the machine, so it goes on after the cartridge does: a
+    // cartridge drawn over the machine's face would be lying on it rather than in it.
+    let safe = SafeArea::for_geometry(Geometry::W720H480);
+    let t = ["A", "B", "C"];
+    let mut v = ShelfView::default();
+    v.shelf.set_len(3);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx();
+    v.draw_insert(
+        &mut canvas,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &t,
+        Insertion {
+            seat: 1.0,
+            motion: Motion::Insert,
+        },
+    );
+
+    let band = safe.panel_h as f32 - MOUTH_H;
+    let cart = canvas
+        .frame()
+        .iter()
+        .rposition(|o| matches!(o, Op::Image { y, .. } if *y > band))
+        .expect("a seated insert drew no cart");
+    let (port, ..) = port_at(canvas.frame(), Platform::Gba).expect("a seated insert drew no trim");
+    assert!(
+        port > cart,
+        "the trim is drawn at {port} and the cart at {cart}: the cart is over the machine's face"
+    );
+}
+
+#[test]
+fn a_seated_cart_shows_through_the_port_trim() {
+    // Two contracts meet here. The frame says the trim is drawn after the cartridge; the
+    // drawing says its middle is empty. Neither alone keeps a seated cartridge visible: trim
+    // drawn first is covered by nothing, and a trim painted solid hides the game in the slot.
+    let safe = SafeArea::for_geometry(Geometry::W720H480);
+    let t = ["A", "B", "C"];
+    let mut v = ShelfView::default();
+    v.shelf.set_len(3);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx();
+    v.draw_insert(
+        &mut canvas,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &t,
+        Insertion {
+            seat: 1.0,
+            motion: Motion::Insert,
+        },
+    );
+
+    let band = safe.panel_h as f32 - MOUTH_H;
+    let cart = canvas
+        .frame()
+        .iter()
+        .rposition(|o| matches!(o, Op::Image { y, .. } if *y > band))
+        .expect("a seated insert drew no cart");
+    let (port, x, y, w, h) =
+        port_at(canvas.frame(), Platform::Gba).expect("a seated insert drew no trim");
+    assert!(port > cart, "the trim is not over the cart at all");
+
+    // Down the middle of the mouth, where the cartridge sits: the trim must paint nothing
+    // there. The mask is the same drawing the frame drew, so its middle is the middle.
+    let s = skin::skin(Platform::Gba);
+    let mask = svg::rasterize(s.port, s.port_size.0 as u32, s.port_size.1 as u32)
+        .expect("the trim rasterises");
+    let (px, py) = (safe.panel_w as f32 / 2.0, band + MOUTH_H * 0.75);
+    assert!(
+        px >= x && px <= x + w && py >= y && py <= y + h,
+        "the trim does not cover the mouth"
+    );
+    let mx = (((px - x) * mask.w as f32 / w) as u32).min(mask.w - 1);
+    let my = (((py - y) * mask.h as f32 / h) as u32).min(mask.h - 1);
+    assert_eq!(
+        mask.a[(my * mask.w + mx) as usize],
+        0,
+        "the trim paints over the seated cart at {px},{py}"
+    );
+}
+
+#[test]
+fn the_port_trim_stays_on_the_panel_on_every_geometry() {
+    // Seven platforms, three panels, at rest and seated. A trim that measured itself off the
+    // cart instead of the mouth would run off the side of the widest cart's shelf.
+    let t = ["A", "B"];
+    for g in GEOMETRIES {
+        let safe = SafeArea::for_geometry(g);
+        for p in PLATFORMS {
+            for seat in [0.0f32, 1.0] {
+                let mut v = ShelfView::default();
+                v.shelf.set_len(2);
+                let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+                let mut c = ctx();
+                v.draw_insert(
+                    &mut canvas,
+                    &mut c,
+                    &safe,
+                    p,
+                    &t,
+                    Insertion {
+                        seat,
+                        motion: Motion::Insert,
+                    },
+                );
+
+                let (_, x, y, w, h) = port_at(canvas.frame(), p)
+                    .unwrap_or_else(|| panic!("{g:?} {p:?} seat {seat}: no trim"));
+                for val in [x, y, w, h] {
+                    assert!(val.is_finite(), "{g:?} {p:?} seat {seat}: {x},{y} {w}x{h}");
+                }
+                assert!(w > 0.0 && h > 0.0, "{g:?} {p:?} seat {seat}: {w}x{h}");
+                assert_eq!(h, MOUTH_H, "{g:?} {p:?} seat {seat}: trim height {h}");
+                assert!(
+                    x >= 0.0 && x + w <= safe.panel_w as f32,
+                    "{g:?} {p:?} seat {seat}: the trim at {x}..{} leaves a {}-wide panel",
+                    x + w,
+                    safe.panel_w
+                );
+            }
+        }
     }
 }
 
@@ -590,6 +1056,16 @@ fn an_empty_row_is_a_screen_not_a_crash() {
     v.shelf.set_len(0);
     let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
     let mut c = ctx();
-    v.draw_insert(&mut canvas, &mut c, &safe, Platform::Gba, &[], 0.5);
+    v.draw_insert(
+        &mut canvas,
+        &mut c,
+        &safe,
+        Platform::Gba,
+        &[],
+        Insertion {
+            seat: 0.5,
+            motion: Motion::Insert,
+        },
+    );
     assert!(!canvas.frame().is_empty(), "an empty insert drew nothing");
 }

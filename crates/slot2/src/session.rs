@@ -15,6 +15,20 @@
 //!    `sink_rate / 4` frames (250 ms), split; the `Producer` stays here and the caller takes
 //!    the `Consumer` for its sink (`start` returns `(Session, Consumer)`).
 //!
+//! `start_named(card, cart, core_dir, core, sink_rate, tuning)` is the same list with the core
+//! named instead of resolved: the Core row's choice, which must be one of this platform's own
+//! candidates and whose library is built from the core directory. There is no fallback there —
+//! a core that cannot run the console, or whose library is missing, is an error.
+//!
+//! ## Cheats
+//! `start` reads the cart's `.cht` once (`Card::read_cheats`) and, once the core has the game,
+//! puts the whole file on it before the first frame: one `reset_cheats`, then every entry in
+//! file order with the file's index as the core's index, disabled entries included. A file
+//! that cannot be read or applied fails the launch — half a set is worse than none. Toggling
+//! an entry re-applies the whole set after a reset, so what the core holds is always what the
+//! session says; nothing is written back to the card, and a new session starts from the file's
+//! own `enable` values again (D-21: writing cheat files is the desktop's job).
+//!
 //! ## Per frame (`run_frame(held, volume)`)
 //! `core.set_input(0, registry::mask_for(platform, held))` → `core.run()` →
 //! `core.take_audio()` → resample into a scratch `Vec<i16>` → `volume.apply` →
@@ -30,9 +44,18 @@
 //! at least 1), with `Color::BLACK` behind. Geometry changes mid-game (`av_info()` changing)
 //! must be picked up: read it each frame, and re-upload when the size changed.
 //!
+//! ## States
+//! Each session's states live in the namespace of the core it opened:
+//! `States/<PLAT>/<stem>/<core-base-name>/{resume,<n>}.state`. A libretro state is a core's own
+//! serialization, so two cores for one game keep two sets and neither can read the other's; a
+//! library this frontend does not ship gets a deterministic namespace of its own. `resolve_core`
+//! below is the one place that decides both which library opens and which namespace that is —
+//! the shelf's Resume scan calls the same function, so the hint and the launch cannot disagree.
+//!
 //! ## Stopping
 //! `stop(self)`: flush save RAM one last time, write a resume state
-//! (`core.serialize()` → `card.write_state(cart, StateKind::Resume, …, thumb)`) where the
+//! (`core.serialize()` → `card.scoped_write_state(cart, namespace, StateKind::Resume, …, thumb)`)
+//! where the
 //! thumbnail is the last frame scaled to fit inside 160x160 by nearest-neighbour
 //! (`thumbnail()`), then drop the core. Errors are logged, not returned: losing a resume
 //! state must not stop the player getting back to the shelf.
@@ -82,6 +105,37 @@ fn frame_time_for(fps: f64) -> Duration {
     Duration::from_secs_f64(1.0 / fps)
 }
 
+/// Put a cheat set on the core: one reset, then the entries this core is owed.
+///
+/// `identity` is the core the code is about to be handed to, read from the library that was
+/// actually opened. The delivery policy lives in `slot2-retro::quirks` because it is a fact
+/// about that core's own `retro_cheat_set`: mGBA's ignores the `enabled` flag, so leaving an
+/// entry off is the only way to have it off, while every other core here reads the flag.
+///
+/// The index handed over is always the file's own index — never a position in the subset — so
+/// a later change to one entry cannot shift what the core believes the others are. An unknown
+/// core (`None`, an external library the card named) keeps the older behaviour of being sent
+/// everything, flag and all, which is what it was launched with before this policy existed.
+fn apply_cheats(
+    core: &mut Core,
+    identity: Option<slot2_retro::CoreId>,
+    cheats: &[slot2_store::Cheat],
+) -> Result<(), Error> {
+    let delivery = match identity {
+        Some(core_id) => slot2_retro::cheat_delivery(core_id),
+        None => slot2_retro::CheatDelivery::PassAllEntries,
+    };
+
+    core.reset_cheats();
+    for (index, cheat) in cheats.iter().enumerate() {
+        if delivery == slot2_retro::CheatDelivery::EnabledEntriesOnly && !cheat.enabled {
+            continue;
+        }
+        core.set_cheat(index as u32, cheat.enabled, &cheat.code)?;
+    }
+    Ok(())
+}
+
 /// The share of a frame rewind may spend taking states before it starts taking them less
 /// often. Three percent is under the noise of everything else in a frame.
 pub const REWIND_FRAME_BUDGET: f64 = 0.03;
@@ -103,6 +157,16 @@ pub enum Error {
     NoCore(PathBuf),
     Retro(slot2_retro::Error),
     Store(slot2_store::Error),
+    /// A cheat index this session has no entry for.
+    NoCheat(usize),
+    /// A core the caller named that cannot run this platform's games.
+    ///
+    /// An error rather than a fallback: a caller that named one core is asking for that core,
+    /// and quietly opening another would leave what it asked for and what is running apart.
+    UnsupportedCore(slot2_retro::CoreId),
+    /// Applying cheats failed and putting the previous set back failed with it. Both
+    /// messages are kept: either one alone would hide the other.
+    Cheat(String),
 }
 
 impl std::fmt::Display for Error {
@@ -111,6 +175,11 @@ impl std::fmt::Display for Error {
             Error::NoCore(p) => write!(f, "no core at {}", p.display()),
             Error::Retro(e) => write!(f, "{e}"),
             Error::Store(e) => write!(f, "{e}"),
+            Error::NoCheat(index) => write!(f, "no cheat at index {index}"),
+            Error::UnsupportedCore(core) => {
+                write!(f, "{} cannot run this console", core.base_name())
+            }
+            Error::Cheat(message) => write!(f, "{message}"),
         }
     }
 }
@@ -126,10 +195,184 @@ impl From<slot2_store::Error> for Error {
     }
 }
 
+/// The registry's name for the shelf a cart came off.
+///
+/// In one place because three callers need it — a launch, a frame, a scan — and a fourth copy
+/// is how a platform gets missed.
+pub(crate) fn retro_platform(platform: slot2_store::Platform) -> slot2_retro::Platform {
+    match platform {
+        slot2_store::Platform::Gb => slot2_retro::Platform::Gb,
+        slot2_store::Platform::Gbc => slot2_retro::Platform::Gbc,
+        slot2_store::Platform::Gba => slot2_retro::Platform::Gba,
+        slot2_store::Platform::Nes => slot2_retro::Platform::Nes,
+        slot2_store::Platform::Snes => slot2_retro::Platform::Snes,
+        slot2_store::Platform::Md => slot2_retro::Platform::Md,
+        slot2_store::Platform::Sms => slot2_retro::Platform::Sms,
+    }
+}
+
+/// Which core a launch will open, and the namespace its states live in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CoreChoice {
+    /// The library that will be opened.
+    pub(crate) dylib: PathBuf,
+    /// What that library is, when it is one this frontend ships.
+    pub(crate) core_id: Option<slot2_retro::CoreId>,
+    /// Where its states live. Never empty, and never able to leave the card.
+    pub(crate) namespace: slot2_store::StateNamespace,
+}
+
+/// Resolve the core a game's settings file asks for, without opening anything.
+///
+/// A launch and the shelf's scan of Resume states need the same answer, and a second copy of
+/// this would be a second answer to "what does this settings file mean". The rules are the
+/// ones the launch path always had: a name that is not on the card falls back to the platform's
+/// own core, so does a core that cannot run this console, and a library this frontend does not
+/// ship opens the way it always did.
+///
+/// `quiet` is for the scan, which runs for every cart on every rescan: a fallback is worth one
+/// line at the moment a game starts, not one line per shelf visit.
+pub(crate) fn resolve_core(card: &Card, cart: &Cart, core_dir: &Path, quiet: bool) -> CoreChoice {
+    let platform = retro_platform(cart.platform);
+    let def = slot2_retro::def(platform);
+    let mut chosen = core_dir.join(def.default_core.file_name());
+    let mut fell_back = None;
+
+    match card.read_settings(cart).core.as_deref().map(str::trim) {
+        // A core's name is a file name inside the core directory, never a path: a setting that
+        // could name `..\..\anything` would be a way to open a library from anywhere on the
+        // card, which is not what this setting is for.
+        Some(name) if is_path_like(name) => {
+            fell_back = Some(format!("names {name}, which is not a core file name"));
+        }
+        Some(name) => {
+            let named = core_dir.join(core_file_name(name));
+            if named.is_file() {
+                match slot2_retro::CoreId::from_library_path(&named) {
+                    Some(core) if !core.supports_platform(platform) => {
+                        fell_back = Some(format!(
+                            "asks for {}, which cannot run {platform:?} games",
+                            core.base_name()
+                        ));
+                    }
+                    _ => chosen = named,
+                }
+            } else {
+                fell_back = Some(format!("asks for core {name}, which is not on the card"));
+            }
+        }
+        None => {}
+    }
+
+    if let Some(why) = fell_back.filter(|_| !quiet) {
+        eprintln!(
+            "slot2: {} {why}; using {}",
+            cart.stem,
+            def.default_core.base_name()
+        );
+    }
+
+    let core_id = slot2_retro::CoreId::from_library_path(&chosen);
+    let namespace = namespace_for(&chosen, core_id);
+    CoreChoice {
+        dylib: chosen,
+        core_id,
+        namespace,
+    }
+}
+
+/// A name that could walk out of the core directory.
+fn is_path_like(name: &str) -> bool {
+    name.is_empty()
+        || name == "."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains(':')
+        || name == ".."
+}
+
+/// The namespace of a platform's own core: where a card's flat states belong, and where a
+/// game starts when nothing else says otherwise.
+pub(crate) fn default_namespace(platform: slot2_store::Platform) -> slot2_store::StateNamespace {
+    namespace_of_core(slot2_retro::def(retro_platform(platform)).default_core)
+}
+
+/// The namespace a core this frontend ships keeps its states in.
+fn namespace_of_core(core: slot2_retro::CoreId) -> slot2_store::StateNamespace {
+    slot2_store::StateNamespace::new(core.base_name())
+        .expect("a core's base name is a lowercase ASCII name")
+}
+
+/// The namespace a library's states live in.
+///
+/// A core this frontend ships is named by its canonical base name — `mgba_libretro`,
+/// `gambatte_libretro` — so a card that has been through several versions still finds its
+/// states where the core's own name says they are. An external library gets its stem when that
+/// is a name this store takes, and otherwise a deterministic spelling of its bytes: the same
+/// library lands in the same directory on every machine and every run, which a seeded hasher
+/// could not promise.
+fn namespace_for(path: &Path, core_id: Option<slot2_retro::CoreId>) -> slot2_store::StateNamespace {
+    match core_id {
+        Some(core) => namespace_of_core(core),
+        None => external_namespace(path),
+    }
+}
+
+/// The namespace for a library this frontend does not ship: `external_<hex>_<hex>`.
+///
+/// The first part is the first bytes of the stem spelled out, the second is FNV-1a over the
+/// whole stem. No `DefaultHasher`, no seed: a directory name on a card has to mean the same
+/// thing tomorrow and on the machine next door.
+fn external_namespace(path: &Path) -> slot2_store::StateNamespace {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    // A stem that is already a plain name is its own namespace, which is what a core called
+    // `mystery_libretro` should get.
+    let canonical = stem.to_ascii_lowercase();
+    if let Ok(namespace) = slot2_store::StateNamespace::new(&canonical) {
+        return namespace;
+    }
+
+    // 9 + 19 * 2 + 1 + 16 = 64 bytes, the most a namespace may be.
+    const PREFIX_BYTES: usize = 19;
+    let mut name = String::from("external_");
+    for byte in stem.as_bytes().iter().take(PREFIX_BYTES) {
+        name.push_str(&format!("{byte:02x}"));
+    }
+    name.push('_');
+    name.push_str(&format!("{:016x}", fnv1a64(stem.as_bytes())));
+    slot2_store::StateNamespace::new(&name)
+        .expect("the external spelling is 64 bytes of lowercase ASCII at most")
+}
+
+/// FNV-1a, 64 bit: a fixed arithmetic recipe with no seed and no table, so the same bytes give
+/// the same number in every process — and this number ends up in a directory name on a card.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 pub struct Session {
     cart: Cart,
     core: Core,
+    /// Which core the library that was opened is, when it is one this frontend ships. `None`
+    /// for an external library the card named, which is a core this crate knows nothing about.
+    core_id: Option<slot2_retro::CoreId>,
+    /// Where this session's states live: one directory per core, under the game. A libretro
+    /// state is a core's own serialization and no other core can read it, so the core that was
+    /// opened is the only one whose states this session reads or writes.
+    namespace: slot2_store::StateNamespace,
     retro_platform: slot2_retro::Platform,
+    /// The cheats this session wants on, in file order, exactly as the card holds them.
+    ///
+    /// The index in this slice is the file's index, which is the index the core is given —
+    /// but not every entry here is necessarily *on* the core: `CheatDelivery::EnabledEntriesOnly`
+    /// cores (mGBA, FCEUmm) are handed only the enabled ones. This is the desired list, and
+    /// which entries the core holds is the delivery policy's business.
+    cheats: Vec<slot2_store::Cheat>,
     rewind: slot2_retro::Rewind,
     rewind_on: bool,
     /// The worst capture seen so far, which is what the interval is budgeted against.
@@ -138,6 +381,14 @@ pub struct Session {
     aspect: slot2_retro::Aspect,
     overscan: slot2_retro::Overscan,
     scale: slot2_gfx::ScalePolicy,
+    /// The effect the game picture is drawn through, or `None` for the ordinary image draw.
+    ///
+    /// Set once from the card at launch and changeable at run time. A missing key lands here
+    /// as the platform's own default (which is what a later `set_shader_effect` moves), and an
+    /// explicit `Off` lands here as `None`: the two are different things on the card and this
+    /// field is the one place they stop being. Nothing about the running game depends on it:
+    /// it is renderer state, like the scale policy.
+    shader: Option<slot2_gfx::ShaderEffect>,
     producer: Producer,
     resampler: Resampler,
     frame_time: Duration,
@@ -169,40 +420,66 @@ impl Session {
         sink_rate: u32,
         tuning: slot2_retro::Tuning,
     ) -> Result<(Session, Consumer), Error> {
-        let retro_platform = match cart.platform {
-            slot2_store::Platform::Gb => slot2_retro::Platform::Gb,
-            slot2_store::Platform::Gbc => slot2_retro::Platform::Gbc,
-            slot2_store::Platform::Gba => slot2_retro::Platform::Gba,
-            slot2_store::Platform::Nes => slot2_retro::Platform::Nes,
-            slot2_store::Platform::Snes => slot2_retro::Platform::Snes,
-            slot2_store::Platform::Md => slot2_retro::Platform::Md,
-            slot2_store::Platform::Sms => slot2_retro::Platform::Sms,
+        // Which core this launch opens, and where its states live: one resolver, shared with
+        // the shelf's scan, so the two cannot disagree about what a settings file means.
+        let choice = resolve_core(card, cart, core_dir, false);
+        Session::open(card, cart, &choice, sink_rate, tuning)
+    }
+
+    /// Open one named core for this cart, without asking the settings file.
+    ///
+    /// The Core row has already let the player choose, and the choice is about to be written
+    /// to the card; coming back through `resolve_core` here would be a second answer to
+    /// "which library", and a launch that quietly fell back to another core would leave the
+    /// setting and the running game disagreeing about what is being played. So the core is
+    /// named, its library path is built from the core directory rather than handed in, and a
+    /// combination this platform does not run is an error rather than a fallback.
+    pub fn start_named(
+        card: &Card,
+        cart: &Cart,
+        core_dir: &Path,
+        core: slot2_retro::CoreId,
+        sink_rate: u32,
+        tuning: slot2_retro::Tuning,
+    ) -> Result<(Session, Consumer), Error> {
+        if !slot2_retro::supported_cores(retro_platform(cart.platform)).contains(&core) {
+            return Err(Error::UnsupportedCore(core));
+        }
+        let choice = CoreChoice {
+            dylib: core_dir.join(core.file_name()),
+            core_id: Some(core),
+            namespace: namespace_of_core(core),
         };
+        Session::open(card, cart, &choice, sink_rate, tuning)
+    }
+
+    /// Load a resolved core for a cart and start it.
+    ///
+    /// The one place a `Session` is built, so a core found through the settings and a core
+    /// named by the player cannot drift apart in what the core is handed: the options, the
+    /// cheat delivery policy and the state namespace all come from `choice`.
+    fn open(
+        card: &Card,
+        cart: &Cart,
+        choice: &CoreChoice,
+        sink_rate: u32,
+        tuning: slot2_retro::Tuning,
+    ) -> Result<(Session, Consumer), Error> {
+        let CoreChoice {
+            dylib,
+            core_id,
+            namespace,
+        } = choice;
+        let retro_platform = retro_platform(cart.platform);
 
         let def = slot2_retro::def(retro_platform);
         let settings = card.read_settings(cart);
+        // Read once, here: the file belongs to this launch, and one that cannot be read or
+        // understood stops it rather than quietly starting a game with no cheats.
+        let cheats = card.read_cheats(cart)?;
 
-        // A named core that is not on the card falls back to the platform's own, with a
-        // line in the log. A setting is allowed to be wrong; it is not allowed to make a
-        // game unlaunchable, and the player who typed it will not see a panic.
-        let dylib = match settings.core.as_deref() {
-            Some(name) => {
-                let named = core_dir.join(core_file_name(name));
-                if named.exists() {
-                    named
-                } else {
-                    eprintln!(
-                        "slot2: {} asks for core {name}, which is not on the card; using {}",
-                        cart.stem,
-                        def.default_core.base_name()
-                    );
-                    core_dir.join(def.default_core.file_name())
-                }
-            }
-            None => core_dir.join(def.default_core.file_name()),
-        };
         if !dylib.exists() {
-            return Err(Error::NoCore(dylib));
+            return Err(Error::NoCore(dylib.clone()));
         }
 
         // A BIOS on the card is the player asking for the real boot sequence; none means
@@ -211,7 +488,19 @@ impl Session {
             .bios
             .iter()
             .any(|name| card.bios_dir().join(name).exists());
-        let options = slot2_retro::options_for(retro_platform, bios_present, tuning);
+        // The options belong to the core that will read them: an alternative core must not be
+        // handed the platform default's `mgba_*` keys. A core this crate does not know keeps
+        // the platform default's options, which is what it was launched with before cores were
+        // identified at all.
+        let options = match core_id {
+            Some(core) => {
+                slot2_retro::options_for_core(*core, retro_platform, bios_present, tuning)
+                    .unwrap_or_else(|| {
+                        slot2_retro::options_for(retro_platform, bios_present, tuning)
+                    })
+            }
+            None => slot2_retro::options_for(retro_platform, bios_present, tuning),
+        };
 
         let env = slot2_retro::Env {
             system_dir: card.bios_dir(),
@@ -220,12 +509,20 @@ impl Session {
             language: 0,
         };
 
-        let mut core = Core::load(&dylib, &cart.rom, env)?;
+        let mut core = Core::load(dylib, &cart.rom, env)?;
 
         if let Some(save) = card.read_save(cart) {
             if let Err(e) = core.write_memory(slot2_retro::Memory::SaveRam, &save) {
                 eprintln!("slot2: save RAM size mismatch: {e}");
             }
+        }
+
+        // The whole set goes on before the first frame, so the game never runs one without
+        // the cheats it is supposed to have. A failure takes the attempt back out again: a
+        // core holding half a set behaves like neither game.
+        if let Err(e) = apply_cheats(&mut core, *core_id, &cheats) {
+            core.reset_cheats();
+            return Err(e);
         }
 
         let av = core.av_info();
@@ -235,23 +532,18 @@ impl Session {
         let session = Session {
             cart: cart.clone(),
             core,
+            core_id: *core_id,
+            namespace: namespace.clone(),
             retro_platform,
+            cheats,
             rewind: slot2_retro::Rewind::new(def.rewind),
             rewind_on: settings.rewind.unwrap_or(true),
             rewind_cost: std::time::Duration::ZERO,
             speed: 1,
             aspect: def.aspect,
-            overscan: if settings.overscan.unwrap_or(true) {
-                def.overscan
-            } else {
-                slot2_retro::Overscan::NONE
-            },
-            scale: match settings.scale {
-                Some(slot2_store::ScaleMode::Integer) => slot2_gfx::ScalePolicy::Integer,
-                Some(slot2_store::ScaleMode::AspectFit) => slot2_gfx::ScalePolicy::AspectFit,
-                Some(slot2_store::ScaleMode::Fill) => slot2_gfx::ScalePolicy::Fill,
-                None => slot2_gfx::ScalePolicy::default(),
-            },
+            overscan: Session::overscan_for(retro_platform, settings.overscan),
+            scale: Session::policy_for(settings.scale),
+            shader: Session::shader_effect_for(retro_platform, settings.shader),
             producer,
             resampler,
             frame_time: frame_time_for(av.fps),
@@ -295,17 +587,73 @@ impl Session {
         &self.cart
     }
 
+    /// Which of the cores this frontend ships is running, from the library that was opened.
+    ///
+    /// `None` when the card named a library this crate does not know — an external core still
+    /// runs, it just has no per-core facts here — and `Some` for the core a fallback landed on
+    /// when the named one was not on the card.
+    pub fn core_id(&self) -> Option<slot2_retro::CoreId> {
+        self.core_id
+    }
+
+    /// Where this session's states live: the namespace of the core that was opened, whether
+    /// or not this frontend ships it.
+    ///
+    /// The App reads and writes states through this and nothing else, so a second core for the
+    /// same game never sees — or overwrites — the first one's Resume or numbered states.
+    pub fn state_namespace(&self) -> &slot2_store::StateNamespace {
+        &self.namespace
+    }
+
+    /// The cheats this session wants on, in file order. The index in this slice is the index
+    /// the core was given, which is the index `set_cheat_enabled` takes. An entry that is off
+    /// is still in the list; whether the core was handed it depends on the core (see
+    /// `apply_cheats`).
+    ///
+    /// Read only, and only about right now: the card's file stays the record of what the
+    /// game starts with (D-21).
+    pub fn cheats(&self) -> &[slot2_store::Cheat] {
+        &self.cheats
+    }
+
+    /// Turn one entry on or off for this session, and put the whole set back on the core.
+    ///
+    /// A reset and a full ordered re-apply, not a second call for the one index: what the
+    /// core holds has to end up as what this session says, and the entry that changed is not
+    /// the only thing the core may be carrying from a moment ago.
+    ///
+    /// Nothing is written to the card — `cheatN_enable` in the file belongs to the desktop
+    /// tool (D-21) — so starting the game again begins from the file. If the re-apply fails,
+    /// the core goes back to the previous set and the session's own state stays with it; if
+    /// even that fails, the error carries both messages rather than only the last one.
+    pub fn set_cheat_enabled(&mut self, index: usize, enabled: bool) -> Result<(), Error> {
+        let Some(cheat) = self.cheats.get(index) else {
+            return Err(Error::NoCheat(index));
+        };
+        if cheat.enabled == enabled {
+            // The core is already holding this set, so there is nothing to say to it.
+            return Ok(());
+        }
+
+        let mut wanted = self.cheats.clone();
+        wanted[index].enabled = enabled;
+
+        if let Err(e) = apply_cheats(&mut self.core, self.core_id, &wanted) {
+            self.core.reset_cheats();
+            return match apply_cheats(&mut self.core, self.core_id, &self.cheats) {
+                Ok(()) => Err(e),
+                Err(back) => Err(Error::Cheat(format!(
+                    "{e}; putting the previous cheats back also failed: {back}"
+                ))),
+            };
+        }
+        self.cheats = wanted;
+        Ok(())
+    }
+
     /// Advance one frame with the buttons currently held.
     pub fn run_frame(&mut self, held: &[LogicalButton], volume: &Volume) {
-        let retro_platform = match self.cart.platform {
-            slot2_store::Platform::Gb => slot2_retro::Platform::Gb,
-            slot2_store::Platform::Gbc => slot2_retro::Platform::Gbc,
-            slot2_store::Platform::Gba => slot2_retro::Platform::Gba,
-            slot2_store::Platform::Nes => slot2_retro::Platform::Nes,
-            slot2_store::Platform::Snes => slot2_retro::Platform::Snes,
-            slot2_store::Platform::Md => slot2_retro::Platform::Md,
-            slot2_store::Platform::Sms => slot2_retro::Platform::Sms,
-        };
+        let retro_platform = retro_platform(self.cart.platform);
 
         self.core.set_input(
             0,
@@ -492,17 +840,87 @@ impl Session {
         let aspect = self.aspect.display(shown);
         let r = slot2_gfx::place(self.scale, shown, aspect, canvas.size());
         let uv = slot2_gfx::sub_uv(src, o.left, o.top, o.right, o.bottom);
+        // The placement, the crop and the tint are worked out once and are the same whichever
+        // way the picture goes out; the effect changes how the quad is sampled, not where it
+        // is. A shader is never a reason to recompute the geometry or to fall back to the
+        // whole texture.
+        let (x, y, w, h) = (r.x as f32, r.y as f32, r.w as f32, r.h as f32);
 
         canvas.clear(slot2_gfx::Color::BLACK);
-        canvas.image_uv(
-            tex,
-            r.x as f32,
-            r.y as f32,
-            r.w as f32,
-            r.h as f32,
-            uv,
-            slot2_gfx::Color::WHITE,
-        );
+        match self.shader {
+            Some(effect) => {
+                canvas.image_effect_uv(tex, x, y, w, h, uv, slot2_gfx::Color::WHITE, effect)
+            }
+            None => canvas.image_uv(tex, x, y, w, h, uv, slot2_gfx::Color::WHITE),
+        }
+    }
+
+    /// The renderer policy a stored scale means, or `ScalePolicy::default()` when the game has
+    /// no override of its own.
+    ///
+    /// Here rather than at one of its callers because there are two: the launch path reads a
+    /// card, and the Display menu changes the setting mid-game. A second copy of this mapping is
+    /// a second answer to "what does Fill mean".
+    pub fn policy_for(scale: Option<slot2_store::ScaleMode>) -> slot2_gfx::ScalePolicy {
+        match scale {
+            Some(slot2_store::ScaleMode::Integer) => slot2_gfx::ScalePolicy::Integer,
+            Some(slot2_store::ScaleMode::AspectFit) => slot2_gfx::ScalePolicy::AspectFit,
+            Some(slot2_store::ScaleMode::Fill) => slot2_gfx::ScalePolicy::Fill,
+            None => slot2_gfx::ScalePolicy::default(),
+        }
+    }
+
+    /// The renderer effect a stored shader setting means on this platform, or `None` for the
+    /// ordinary image draw.
+    ///
+    /// The one place a card's spelling becomes a renderer's type, because it is the only place
+    /// that knows all three sides: `slot2-store` owns the file format, `slot2-retro` owns the
+    /// platform's own default and `slot2-gfx` owns the programs, and none of them has to know
+    /// the others. Written as an exhaustive match rather than through the enums' order, their
+    /// spellings or the platform's name, so a new preset in the store or a new platform
+    /// default stops compiling here and somebody decides what it draws.
+    ///
+    /// The three meanings, in the order the card's two states and its silence have to be read:
+    /// an explicit `Off` is the plain draw on every platform; any other preset is what the
+    /// game asked for, whatever the platform's own default is; and a missing key inherits
+    /// `PlatformDef::shader_default`. The last is what the platform is here for, and it is a
+    /// default rather than a rewrite — nothing on this path writes a computed value back to
+    /// the card, so "shaders off" and "never said anything" stay different on disk.
+    pub fn shader_effect_for(
+        platform: slot2_retro::Platform,
+        preset: Option<slot2_store::ShaderPreset>,
+    ) -> Option<slot2_gfx::ShaderEffect> {
+        match preset {
+            Some(slot2_store::ShaderPreset::Off) => None,
+            Some(slot2_store::ShaderPreset::SharpBilinear) => {
+                Some(slot2_gfx::ShaderEffect::SharpBilinear)
+            }
+            Some(slot2_store::ShaderPreset::Lcd3x) => Some(slot2_gfx::ShaderEffect::Lcd3x),
+            Some(slot2_store::ShaderPreset::ZfastCrt) => Some(slot2_gfx::ShaderEffect::ZfastCrt),
+            Some(slot2_store::ShaderPreset::Scanline) => Some(slot2_gfx::ShaderEffect::Scanline),
+            None => Some(match slot2_retro::def(platform).shader_default {
+                slot2_retro::PlatformShader::SharpBilinear => {
+                    slot2_gfx::ShaderEffect::SharpBilinear
+                }
+                slot2_retro::PlatformShader::Lcd3x => slot2_gfx::ShaderEffect::Lcd3x,
+                slot2_retro::PlatformShader::ZfastCrt => slot2_gfx::ShaderEffect::ZfastCrt,
+                slot2_retro::PlatformShader::Scanline => slot2_gfx::ShaderEffect::Scanline,
+            }),
+        }
+    }
+
+    /// The effect this session draws its game picture through, or `None` for the plain draw.
+    pub fn shader_effect(&self) -> Option<slot2_gfx::ShaderEffect> {
+        self.shader
+    }
+
+    /// Change the effect at run time, for the Display menu and the shelf.
+    ///
+    /// Renderer state only, exactly like `set_scale`: no card is read or written, the core is
+    /// not restarted or reset, no frame is run, and the game texture is left where it is. The
+    /// next draw uses the new effect and the one after that could use another.
+    pub fn set_shader_effect(&mut self, effect: Option<slot2_gfx::ShaderEffect>) {
+        self.shader = effect;
     }
 
     /// How the picture is laid on the panel, and what is cropped off it first.
@@ -517,11 +935,45 @@ impl Session {
     /// Turn the platform's default overscan crop on or off. Off is the safe answer for a
     /// game that draws to the edge; on hides the rubbish a television never showed.
     pub fn set_overscan(&mut self, crop: bool) {
-        self.overscan = if crop {
-            slot2_retro::def(self.retro_platform).overscan
-        } else {
-            slot2_retro::Overscan::NONE
-        };
+        self.set_overscan_setting(Some(crop));
+    }
+
+    /// The crop a stored overscan setting means on this platform.
+    ///
+    /// The one place the card's silence becomes a crop, because it is the only place that knows
+    /// both sides: `slot2-store` owns the file's two states and `slot2-retro` owns the platform's
+    /// own answer. Written as an exhaustive match rather than through `unwrap_or`, so the three
+    /// meanings stay three: `None` is the absence of a setting and inherits
+    /// `PlatformDef::overscan`, `Some(true)` asks for that same crop as this game's own decision,
+    /// and `Some(false)` asks for the whole frame. A platform with nothing to crop answers
+    /// `Overscan::NONE` for two of the three, which is why the App only offers the choice where
+    /// there is a difference to make.
+    ///
+    /// Nothing on this path writes a computed value back to the card: "crop" and "never said
+    /// anything" stay different on disk however alike they look on screen.
+    pub fn overscan_for(
+        platform: slot2_retro::Platform,
+        setting: Option<bool>,
+    ) -> slot2_retro::Overscan {
+        match setting {
+            None | Some(true) => slot2_retro::def(platform).overscan,
+            Some(false) => slot2_retro::Overscan::NONE,
+        }
+    }
+
+    /// The crop this session is drawing with.
+    pub fn overscan(&self) -> slot2_retro::Overscan {
+        self.overscan
+    }
+
+    /// Change the crop at run time, for the Display menu's overscan screen.
+    ///
+    /// Renderer state only, exactly like `set_scale` and `set_shader_effect`: no card is read or
+    /// written, the core is not restarted or reset, no frame is run, and the game texture is left
+    /// where it is. The next draw works out its placement, aspect and UV again from the new crop,
+    /// over the same picture the core last produced.
+    pub fn set_overscan_setting(&mut self, setting: Option<bool>) {
+        self.overscan = Session::overscan_for(self.retro_platform, setting);
     }
 
     /// The last frame as RGBA8 with its size, for thumbnails and tests.
@@ -566,16 +1018,20 @@ impl Session {
             height: *h,
             rgba,
         });
-        card.write_state(&self.cart, kind, &data, t)?;
+        card.scoped_write_state(&self.cart, &self.namespace, kind, &data, t)?;
         Ok(())
     }
 
     pub fn load_state(&mut self, card: &Card, kind: StateKind) -> Result<(), Error> {
         let data = card
-            .read_state(&self.cart, kind)
+            .scoped_read_state(&self.cart, &self.namespace, kind)
             .ok_or_else(|| Error::Retro(slot2_retro::Error::State("no such state".into())))?;
         self.core.unserialize(&data)?;
         self.resampler.reset();
+        // The captures behind this moment belong to a future that no longer happened.
+        // Stepping back into it would put the player in a game that was never played, which
+        // is why a state jump is the end of the chain rather than a point in it.
+        self.rewind.clear();
         Ok(())
     }
 
@@ -600,7 +1056,9 @@ impl Session {
                 height: *h,
                 rgba,
             });
-            if let Err(e) = card.write_state(&self.cart, StateKind::Resume, &state, t) {
+            if let Err(e) =
+                card.scoped_write_state(&self.cart, &self.namespace, StateKind::Resume, &state, t)
+            {
                 eprintln!("slot2: error writing resume state: {e}");
             }
         }
@@ -621,3 +1079,199 @@ impl Session {
 /// Unused imports guard: these types are part of the contract above.
 #[allow(dead_code)]
 fn _types(_: Option<TexId>, _: Option<Producer>, _: Option<Resampler>, _: Option<Core>) {}
+
+#[cfg(test)]
+mod tests {
+    //! The core resolver: which library a settings file means, and which directory that
+    //! library's states go in. The launch and the shelf's Resume scan both ask this one
+    //! function, so what is pinned here is the whole of what a settings file can mean.
+    //!
+    //! Nothing is opened: the questions are about a name and a path, so an empty file with
+    //! the right name is the whole fixture.
+
+    use super::*;
+    use slot2_store::{GameSettings, Platform};
+
+    /// A card with one GBA cart, its settings file, and a directory of stub libraries.
+    fn fixture(tag: &str, core: Option<&str>) -> (Card, Cart, PathBuf) {
+        let root = std::env::temp_dir().join(format!("slot2-resolve-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let card = Card::new(root.join("card"));
+        card.ensure_layout();
+        let dir = root.join("cores");
+        std::fs::create_dir_all(&dir).unwrap();
+        let cart = Cart {
+            platform: Platform::Gba,
+            stem: "arm".into(),
+            title: "arm".into(),
+            rom: card.games_dir(Platform::Gba).join("arm.gba"),
+        };
+        if let Some(name) = core {
+            patch_core(&card, &cart, Some(name));
+        }
+        (card, cart, dir)
+    }
+
+    /// A file named like a library, with nothing in it. The resolver never opens one.
+    fn stub(dir: &Path, name: &str) {
+        std::fs::write(dir.join(name), b"not a library").unwrap();
+    }
+
+    fn patch_core(card: &Card, cart: &Cart, core: Option<&str>) {
+        let settings = GameSettings {
+            core: core.map(str::to_owned),
+            ..Default::default()
+        };
+        card.write_settings(cart, &settings).unwrap();
+    }
+
+    fn ns(name: &str) -> slot2_store::StateNamespace {
+        slot2_store::StateNamespace::new(name).unwrap()
+    }
+
+    #[test]
+    fn a_game_with_no_setting_takes_the_platforms_own_core_and_its_namespace() {
+        let (card, cart, dir) = fixture("plain", None);
+        let choice = resolve_core(&card, &cart, &dir, true);
+        assert_eq!(
+            choice.dylib,
+            dir.join(slot2_retro::CoreId::Mgba.file_name())
+        );
+        assert_eq!(choice.core_id, Some(slot2_retro::CoreId::Mgba));
+        assert_eq!(choice.namespace, ns("mgba_libretro"));
+        assert_eq!(
+            choice.namespace,
+            default_namespace(Platform::Gba),
+            "the namespace a scan caches a resume against must be the one a launch uses"
+        );
+    }
+
+    #[test]
+    fn an_official_core_is_taken_only_when_it_is_on_the_card_and_can_run_the_console() {
+        let (card, cart, dir) = fixture("gpsp", Some("gpsp"));
+
+        // Not on the card: the platform's own core, which is what a card that names a core
+        // it does not have has always got.
+        let choice = resolve_core(&card, &cart, &dir, true);
+        assert_eq!(choice.core_id, Some(slot2_retro::CoreId::Mgba));
+        assert_eq!(choice.namespace, ns("mgba_libretro"));
+
+        // On the card: what the setting asked for, spelled either way a person would.
+        stub(&dir, &slot2_retro::CoreId::Gpsp.file_name());
+        for name in ["gpsp", "gpsp_libretro"] {
+            patch_core(&card, &cart, Some(name));
+            let choice = resolve_core(&card, &cart, &dir, true);
+            assert_eq!(choice.core_id, Some(slot2_retro::CoreId::Gpsp), "{name}");
+            assert_eq!(choice.namespace, ns("gpsp_libretro"), "{name}");
+        }
+
+        // An official core that cannot run this console: the file is there, and opening it
+        // would be a game that cannot start. The namespace follows the core that opens.
+        stub(&dir, &slot2_retro::CoreId::Gambatte.file_name());
+        patch_core(&card, &cart, Some("gambatte_libretro"));
+        let choice = resolve_core(&card, &cart, &dir, true);
+        assert_eq!(choice.core_id, Some(slot2_retro::CoreId::Mgba));
+        assert_eq!(choice.namespace, ns("mgba_libretro"));
+
+        // The same library on a console it does run: opened, with its own namespace.
+        let gb = Cart {
+            platform: Platform::Gb,
+            ..cart.clone()
+        };
+        patch_core(&card, &gb, Some("gambatte_libretro"));
+        let choice = resolve_core(&card, &gb, &dir, true);
+        assert_eq!(choice.core_id, Some(slot2_retro::CoreId::Gambatte));
+        assert_eq!(choice.namespace, ns("gambatte_libretro"));
+    }
+
+    #[test]
+    fn a_setting_that_names_a_path_never_reaches_outside_the_core_directory() {
+        let (card, cart, dir) = fixture("paths", None);
+        // Every one of these is a path rather than a core's file name, including the empty
+        // string and the trailing-extension spellings a person might type. None of them may
+        // pick a library from anywhere on the card.
+        let names = [
+            "",
+            ".",
+            "..",
+            "../mgba_libretro",
+            "..\\..\\mgba_libretro",
+            "/tmp/mgba_libretro",
+            "C:\\cores\\mgba_libretro",
+            "sub/dir/mgba_libretro",
+        ];
+        for name in names {
+            patch_core(&card, &cart, Some(name));
+            let choice = resolve_core(&card, &cart, &dir, true);
+            assert_eq!(choice.core_id, Some(slot2_retro::CoreId::Mgba), "{name:?}");
+            assert_eq!(
+                choice.dylib,
+                dir.join(slot2_retro::CoreId::Mgba.file_name()),
+                "{name:?}"
+            );
+            assert_eq!(choice.dylib.parent(), Some(dir.as_path()), "{name:?}");
+            assert_eq!(choice.namespace, ns("mgba_libretro"), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_library_this_frontend_does_not_ship_gets_a_deterministic_namespace() {
+        // A stem that is already a name this store takes is its own namespace, lowercased.
+        assert_eq!(
+            external_namespace(Path::new("mystery_libretro.dll")),
+            ns("mystery_libretro")
+        );
+        assert_ne!(
+            external_namespace(Path::new("mystery_libretro.dll")),
+            external_namespace(Path::new("another_libretro.dll")),
+            "two libraries must not share one set of states"
+        );
+
+        // A stem this store will not take gets a fixed spelling of its bytes. Pinned rather
+        // than merely compared with itself: this string is a directory name on a card, and a
+        // later version that changed the recipe would stop finding what it wrote before.
+        for (stem, expected) in [
+            (
+                "core!_libretro",
+                "external_636f7265215f6c6962726574726f_73fdf30215bf810f",
+            ),
+            (
+                "My Core_libretro",
+                "external_4d7920436f72655f6c6962726574726f_be538c6f12df829e",
+            ),
+        ] {
+            let path = PathBuf::from(format!("{stem}.dll"));
+            let got = external_namespace(&path);
+            assert_eq!(got.as_str(), expected, "{stem}");
+            assert!(
+                got.as_str().len() <= 64,
+                "a namespace is a directory name and has a ceiling: {}",
+                got.as_str().len()
+            );
+            assert_eq!(
+                external_namespace(&path),
+                got,
+                "the answer moved between runs"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_library_on_the_card_opens_and_keeps_its_own_states() {
+        let (card, cart, dir) = fixture("external", Some("mystery"));
+        stub(&dir, &core_file_name("mystery"));
+
+        let choice = resolve_core(&card, &cart, &dir, true);
+        assert_eq!(
+            choice.core_id, None,
+            "an unknown library was given an identity"
+        );
+        assert_eq!(choice.dylib, dir.join(core_file_name("mystery")));
+        assert_eq!(choice.namespace, ns("mystery_libretro"));
+        assert_ne!(
+            choice.namespace,
+            default_namespace(Platform::Gba),
+            "an external core must not land in the platform's own states"
+        );
+    }
+}

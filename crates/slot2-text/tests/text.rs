@@ -84,6 +84,54 @@ fn a_lazy_font_that_fails_is_skipped_quietly() {
 }
 
 #[test]
+fn a_failed_first_slot_keeps_the_line_box_of_the_fonts_behind_it() {
+    // The shape a card pack can produce: a preferred font the frontend cannot parse, with the
+    // UI font behind it. Glyph resolution already falls through to the next slot; the line box
+    // has to follow it, or a line would have zero height and draw nothing at all.
+    let broken = std::env::temp_dir().join(format!("slot2-text-broken-{}.ttf", std::process::id()));
+    std::fs::write(&broken, b"not a font at all").unwrap();
+
+    let mut alone = FontChain::new();
+    alone.push_file(&open_sans()).unwrap();
+    let want = alone.measure("Tetris", 16.0);
+
+    let mut c = FontChain::new();
+    c.push_lazy_file(&broken);
+    c.push_file(&open_sans()).unwrap();
+
+    let got = c.measure("Tetris", 16.0);
+    assert!(got.ascent > 0.0 && got.descent > 0.0, "{got:?}");
+    assert_eq!(
+        (got.ascent, got.descent, got.line_height),
+        (want.ascent, want.descent, want.line_height),
+        "the line box is not the healthy font's"
+    );
+    assert_eq!(
+        got.width, want.width,
+        "advances changed with the slot order"
+    );
+
+    let b = c.rasterize("Tetris", 16.0);
+    assert_eq!(b.height, want.line_height);
+    assert_eq!(b.data.len(), (b.width * b.height) as usize);
+    assert!(b.ink() > 0, "the text behind the broken slot was not drawn");
+
+    // The failure sticks: the next measurements do not try the file again, and the result is
+    // the same one every time.
+    assert!(!c.is_loaded(FontId(0)), "the broken file was retried");
+    assert_eq!(c.resolve('T'), Some(FontId(1)));
+    let again = c.rasterize("Tetris", 16.0);
+    assert_eq!(
+        (again.width, again.height, again.ink()),
+        (b.width, b.height, b.ink())
+    );
+    let empty = c.measure("", 16.0);
+    assert_eq!(empty.line_height, want.line_height);
+
+    let _ = std::fs::remove_file(&broken);
+}
+
+#[test]
 fn measure_is_positive_monotonic_and_scales() {
     let mut c = chain();
     let a = c.measure("a", 16.0);

@@ -1,0 +1,6 @@
+mgba
+gambatte
+gpsp
+fceumm
+snes9x
+genesis_plus_gx

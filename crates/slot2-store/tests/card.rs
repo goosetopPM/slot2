@@ -279,6 +279,8 @@ fn settings_round_trip_and_land_where_the_design_says() {
         scale: Some(ScaleMode::AspectFit),
         overscan: Some(false),
         rewind: Some(false),
+        shader: None,
+        overlay: None,
     };
     card.write_settings(&cart, &want).unwrap();
 
@@ -313,6 +315,127 @@ fn going_back_to_defaults_leaves_no_file_behind() {
 }
 
 #[test]
+fn a_settings_file_that_cannot_be_removed_is_an_error() {
+    // A directory where the file belongs: clearing the last override has to delete the file,
+    // and a save that reported success here would leave a running game on a setting the card
+    // never took.
+    let (card, _d) = tmp_card("undeletable");
+    let cart = a_cart(&card);
+    let path = card.game_settings_path(&cart);
+    fs::create_dir_all(&path).unwrap();
+
+    assert!(
+        card.write_settings(&cart, &GameSettings::default())
+            .is_err(),
+        "removing the settings file was reported as a save that happened"
+    );
+    assert!(path.is_dir(), "the blocking directory was removed anyway");
+
+    // With nothing there at all, going back to the defaults is still a no-op success.
+    fs::remove_dir(&path).unwrap();
+    card.write_settings(&cart, &GameSettings::default())
+        .unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn an_unreadable_settings_file_is_never_overwritten() {
+    // A damaged file is not an empty one. Reading stays forgiving so the shelf and the launch
+    // still work, but a save must not replace keys this version never managed to read.
+    let (card, _d) = tmp_card("unreadable");
+    let cart = a_cart(&card);
+    let path = card.game_settings_path(&cart);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, [0xff, 0xfe, b's', b'=', 0x80, b'\n']).unwrap();
+    let original = fs::read(&path).unwrap();
+
+    assert_eq!(
+        card.read_settings(&cart),
+        GameSettings::default(),
+        "an unreadable file stopped being forgiving"
+    );
+
+    assert!(
+        card.write_settings(
+            &cart,
+            &GameSettings {
+                scale: Some(ScaleMode::Integer),
+                ..Default::default()
+            }
+        )
+        .is_err(),
+        "an unreadable file was written over"
+    );
+    assert_eq!(fs::read(&path).unwrap(), original, "the file was rewritten");
+
+    assert!(
+        card.write_settings(&cart, &GameSettings::default())
+            .is_err(),
+        "an unreadable file was deleted by a default clear"
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert!(
+        !path.with_extension("ini.tmp").exists(),
+        "a failed save left a temp file beside the settings"
+    );
+}
+
+#[test]
+fn a_directory_where_the_settings_file_belongs_is_refused() {
+    // The other portable unreadable case: no permission bits, which differ per platform.
+    let (card, _d) = tmp_card("dirsettings");
+    let cart = a_cart(&card);
+    let path = card.game_settings_path(&cart);
+    fs::create_dir_all(&path).unwrap();
+
+    assert!(
+        card.write_settings(
+            &cart,
+            &GameSettings {
+                scale: Some(ScaleMode::Fill),
+                ..Default::default()
+            }
+        )
+        .is_err(),
+        "a directory was written over"
+    );
+    assert!(path.is_dir(), "the directory was replaced");
+    assert!(
+        card.write_settings(&cart, &GameSettings::default())
+            .is_err(),
+        "a directory was reported as a cleared file"
+    );
+    assert!(
+        path.is_dir(),
+        "the directory was removed by a default clear"
+    );
+    assert_eq!(card.read_settings(&cart), GameSettings::default());
+}
+
+#[test]
+fn a_missing_file_is_still_a_normal_starting_point() {
+    let (card, _d) = tmp_card("missingfile");
+    let cart = a_cart(&card);
+    let path = card.game_settings_path(&cart);
+    assert!(!path.exists());
+
+    card.write_settings(
+        &cart,
+        &GameSettings {
+            scale: Some(ScaleMode::Fill),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(path.is_file(), "a missing file was not created");
+    assert_eq!(card.read_settings(&cart).scale, Some(ScaleMode::Fill));
+
+    card.write_settings(&cart, &GameSettings::default())
+        .unwrap();
+    assert!(!path.exists(), "an all-default game left a file behind");
+}
+
+#[test]
 fn a_key_this_version_does_not_know_survives_a_save() {
     // A card moved between SLOT2 versions must not lose the newer one's settings the first
     // time the older one writes to it.
@@ -320,7 +443,7 @@ fn a_key_this_version_does_not_know_survives_a_save() {
     let cart = a_cart(&card);
     let path = card.game_settings_path(&cart);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, "shader=lcd3x\nscale=fill\n").unwrap();
+    std::fs::write(&path, "future_filter=lcd3x\nscale=fill\n").unwrap();
 
     let mut s = card.read_settings(&cart);
     assert_eq!(s.scale, Some(ScaleMode::Fill));
@@ -331,7 +454,7 @@ fn a_key_this_version_does_not_know_survives_a_save() {
     // on its spelling.
     let back = Ini::load(&path).unwrap();
     assert_eq!(
-        back.get("shader"),
+        back.get("future_filter"),
         Some("lcd3x"),
         "lost an unknown key: {}",
         std::fs::read_to_string(&path).unwrap()

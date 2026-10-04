@@ -1,0 +1,23 @@
+<!--
+  The moulding on a NES cartridge's face: the two vertical grooves down the sides of the label
+  well, the grip ridge and the two grip lines on the lower front, and the connector moulding at
+  the very bottom. Drawn for SLOT2 in 2026 as a geometric redraw — no manufacturer drawing or
+  external asset was copied, and there is no text or logo here.
+
+  White on transparency, and the alpha is the shape: `ShelfView` rasterises this file into the
+  same coverage mask as the shell and draws it over the shell at 0.8x the shell's colour. It is
+  therefore *not* the light/shadow pair some of the older files carry — one channel, one shape.
+
+  Nothing here crosses the label rect (20, 28, 170x142): the side grooves run outside it and
+  everything else sits below it. Same 210x270 grid as `nes_cart.svg`.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 270">
+  <g fill="#fff">
+    <rect x="9" y="96" width="6" height="132" rx="3"/>
+    <rect x="195" y="96" width="6" height="132" rx="3"/>
+    <rect x="26" y="196" width="158" height="7" rx="3"/>
+    <rect x="34" y="214" width="6" height="36" rx="3"/>
+    <rect x="170" y="214" width="6" height="36" rx="3"/>
+    <rect x="62" y="236" width="86" height="7" rx="3"/>
+  </g>
+</svg>

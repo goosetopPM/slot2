@@ -26,7 +26,8 @@ jobs:
       # checkout and wrong for CI: a suite that silently tests nothing is worse than no
       # suite. So build the pinned cores natively for this runner — the same commits and
       # the same patches the device gets, only for x86_64 — and cache them on the pins, so
-      # only a moved pin pays for it again.
+      # only a moved pin pays for it again. The list is cores/required.txt, the same manifest
+      # the device build and the card assembly read.
       - name: cache cores
         id: cores
         uses: actions/cache@v4
@@ -38,13 +39,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake build-essential
-          for c in mgba fceumm snes9x genesis_plus_gx; do
+          for c in $(tr -d '\r' < cores/required.txt); do
             echo "::group::$c"
             CROSS_TRIPLE= sh "cores/$c/build.sh" build "target-cores/$c" "vendor/${c}_libretro.so"
             echo "::endgroup::"
           done
       - name: cores present
-        run: ls -l vendor/
+        run: |
+          missing=0
+          for c in $(tr -d '\r' < cores/required.txt); do
+            for f in "vendor/${c}_libretro.so" "vendor/${c}_libretro.so.meta"; do
+              if [ ! -s "$f" ]; then echo "::error::missing or empty: $f"; missing=1; fi
+            done
+          done
+          ls -l vendor/
+          exit "$missing"
 
       - name: fmt
         run: cargo fmt --all -- --check
@@ -67,56 +76,11 @@ jobs:
             exit 1
           fi
 
-  # The real thing: aarch64, glibc 2.31 floor, built in the same container developers use.
+  # The same aarch64 card tree as before, now assembled by the one reusable workflow that the
+  # tag release also calls, so a release ships exactly what CI built. The artifact keeps the
+  # commit-based name main's runs already produce.
   device:
-    runs-on: ubuntu-latest
     needs: check
-    steps:
-      - uses: actions/checkout@v4
-      - name: build cross image
-        run: docker build -t slot2-cross -f build/cross.Dockerfile build
-
-      # Cores for the device are a separate build from the host ones above: same pins, same
-      # patches, aarch64. Cached on the pins for the same reason.
-      - name: cache device cores
-        id: devcores
-        uses: actions/cache@v4
-        with:
-          path: vendor
-          key: cores-aarch64-${{ hashFiles('cores/**') }}
-      - name: build device cores
-        if: steps.devcores.outputs.cache-hit != 'true'
-        run: |
-          for c in mgba fceumm snes9x genesis_plus_gx; do
-            echo "::group::$c"
-            docker run --rm -v "$PWD:/src" -w /src slot2-cross \
-              sh "cores/$c/build.sh" build "target-device/cores/$c" "vendor/${c}_libretro.so"
-            echo "::endgroup::"
-          done
-
-      - name: cross build (profile device)
-        run: |
-          docker run --rm -v "$PWD:/src" -w /src slot2-cross \
-            sh -c "cargo build --profile device --target aarch64-unknown-linux-gnu --target-dir target-device -p slot2 --no-default-features --features device \
-                   && file target-device/aarch64-unknown-linux-gnu/device/slot2"
-
-      # Kept in step with build/dist-device.ps1, which is what a developer runs. A tree
-      # without cores boots to an empty shelf and looks like a bug, so this fails rather
-      # than shipping one.
-      - name: assemble card tree
-        run: |
-          out=dist-device
-          mkdir -p "$out/System/Fonts" "$out/System/cores" "$out/System/licenses/fonts"
-          cp target-device/aarch64-unknown-linux-gnu/device/slot2 "$out/System/frontend"
-          cp assets/fonts/*.otf assets/fonts/*.ttf "$out/System/Fonts/"
-          cp assets/fonts/*.txt "$out/System/licenses/fonts/"
-          cp vendor/*_libretro.so "$out/System/cores/"
-          cp vendor/*_libretro.so.meta "$out/System/licenses/"
-          echo "SLOT2 $(git rev-parse --short HEAD) — copy the contents of this folder to the card root" > "$out/System/VERSION.txt"
-          ls -lR "$out"
-          test "$(ls "$out/System/cores" | wc -l)" -eq 4
-      - uses: actions/upload-artifact@v4
-        with:
-          name: slot2-device-${{ github.sha }}
-          path: dist-device
-          if-no-files-found: error
+    uses: ./.github/workflows/device-artifact.yml
+    with:
+      artifact-name: slot2-device-${{ github.sha }}

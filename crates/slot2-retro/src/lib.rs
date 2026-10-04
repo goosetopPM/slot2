@@ -5,7 +5,8 @@
 //! buffers audio, and answers the core's questions from a small, explicit table: system
 //! directory, save directory, variables (core options), pixel format, geometry changes. It
 //! knows nothing about any particular core; what mGBA or snes9x need beyond the standard
-//! lives in `quirks` (M2) as option presets and input maps handed in through this API.
+//! lives in `quirks` (M2) as option presets, input maps and, since D-21, the per-core cheat
+//! syntax a code has to be in before a core is handed it.
 //!
 //! Threading: a `Core` is `Send` but not `Sync`; the frame loop owns it. libretro cores
 //! use global state, so at most one instance per library should be alive at a time
@@ -15,13 +16,18 @@
 
 mod ffi;
 mod host;
+pub mod quirks;
 pub mod registry;
 pub mod rewind;
 
 pub use host::Core;
+pub use quirks::{
+    cheat_delivery, validate_cheat, CheatDelivery, CheatValidation, CheatValidationError,
+};
 pub use registry::{
-    def, joypad_bit, mask_for, options_for, Aspect, Core as CoreId, LogicalButton, Overscan,
-    Platform, PlatformDef, Tuning, PLATFORMS,
+    def, joypad_bit, mask_for, options_for, options_for_core, supported_cores, Aspect,
+    Core as CoreId, LogicalButton, Overscan, Platform, PlatformDef, PlatformShader, Tuning,
+    PLATFORMS,
 };
 pub use rewind::{Rewind, RewindBudget};
 

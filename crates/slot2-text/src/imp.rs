@@ -7,10 +7,13 @@
 //!   (`std::fs::read`, `Font::from_bytes(bytes, FontSettings::default())`); on failure mark
 //!   `Failed`, `eprintln!("slot2-text: {path}: {err}")` once, and continue. A slot has the
 //!   glyph when `font.lookup_glyph_index(ch) != 0`.
-//! - Line metrics come from the FIRST loaded font: `font.horizontal_line_metrics(px)` →
-//!   `ascent`, `descent` (fontdue's descent is negative; report it positive), and
-//!   `line_height = (ascent + descent).ceil() as u32`. If the first slot is lazy and not yet
-//!   loaded, load it for this purpose. If no font at all: ascent = descent = 0, height 0.
+//! - Line metrics come from the first slot in order that loads successfully and offers them:
+//!   `font.horizontal_line_metrics(px)` → `ascent`, `descent` (fontdue's descent is negative;
+//!   report it positive), and `line_height = (ascent + descent).ceil() as u32`. A lazy slot is
+//!   loaded for this purpose. A slot that cannot be loaded, or that offers no line metrics, is
+//!   skipped: a broken font costs its own glyphs and not the line box of the fonts behind it,
+//!   which would otherwise draw nothing at all. If no font at all: ascent = descent = 0,
+//!   height 0.
 //! - Each char: `resolve` → glyph via cache or `font.rasterize(ch, px)`; advance is
 //!   `metrics.advance_width`. Missing everywhere → try `TOFU` the same way; missing again →
 //!   advance `px * 0.5`, draw nothing.
@@ -122,16 +125,22 @@ impl Inner {
         }
     }
 
+    /// Line metrics from the first slot in order that really loads and offers them.
+    ///
+    /// A `Failed` slot is skipped rather than answering for the chain: a font that cannot be
+    /// parsed has no line box, and reporting zeros for it would erase every line the fonts
+    /// behind it could still draw. It stays `Failed` here too, so nothing is re-read or
+    /// re-logged.
     fn line_metrics(&mut self, px: f32) -> (f32, f32, u32) {
-        if self.slots.is_empty() {
-            return (0.0, 0.0, 0);
-        }
-        if let Some(font) = self.ensure_loaded(FontId(0)) {
-            if let Some(m) = font.horizontal_line_metrics(px) {
-                let ascent = m.ascent;
-                let descent = -m.descent;
-                let line_height = (ascent + descent).ceil() as u32;
-                return (ascent, descent, line_height);
+        for i in 0..self.slots.len() {
+            let id = FontId(i);
+            if let Some(font) = self.ensure_loaded(id) {
+                if let Some(m) = font.horizontal_line_metrics(px) {
+                    let ascent = m.ascent;
+                    let descent = -m.descent;
+                    let line_height = (ascent + descent).ceil() as u32;
+                    return (ascent, descent, line_height);
+                }
             }
         }
         (0.0, 0.0, 0)

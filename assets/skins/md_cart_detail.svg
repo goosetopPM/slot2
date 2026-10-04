@@ -1,0 +1,22 @@
+<!--
+  The moulding on a Mega Drive cartridge's face: the groove along the top face above the label
+  well, a grip recess down each side of it, and the ridge over the connector at the bottom.
+  Drawn for SLOT2 in 2026 as a geometric redraw — no manufacturer drawing or external asset was
+  copied, and there is no text or logo here.
+
+  White on transparency, and the alpha is the shape: `ShelfView` rasterises this file into the
+  same coverage mask as the shell and draws it over the shell at 0.8x the shell's colour, so a
+  single channel is the whole drawing.
+
+  Nothing here crosses the label rect (32, 34, 186x84): the top groove is above it, the grip
+  recesses are outside its sides, and the ridge is below it. Same 250x180 grid as `md_cart.svg`.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 180">
+  <g fill="#fff">
+    <rect x="30" y="24" width="190" height="5" rx="2.5"/>
+    <rect x="14" y="60" width="7" height="70" rx="3.5"/>
+    <rect x="229" y="60" width="7" height="70" rx="3.5"/>
+    <rect x="40" y="138" width="170" height="7" rx="3.5"/>
+    <rect x="80" y="158" width="90" height="6" rx="3"/>
+  </g>
+</svg>

@@ -7,7 +7,11 @@
 //! // Trust the framebuffer over the profile table if they disagree, and say so.
 //! if panel != profile.geometry.size() { eprintln!("slot2: panel {panel:?} differs from profile {:?}", ...) }
 //! let mut canvas = GlCanvas::new(&mut surface, panel)?  (on Err: eprintln, sleep 60 s, return)
-//! let mut ctx = UiCtx::new(profile, &boot.lang, crate::font_dirs(&boot.root), Some(&boot.root.join("System/Lang")));
+//! let card = slot2_store::Card::new(&boot.root);      // opened once, and handed to the app below
+//! card.ensure_layout();
+//! let requested = slot2::requested_language(&card, boot.lang_override.as_deref());
+//! let mut ctx = UiCtx::new(profile, &requested, crate::font_dirs(&boot.root), Some(&boot.root.join("System/Lang")));
+//! crate::announce_language(&requested, ctx.i18n.code());   // requested vs what actually runs
 //! let splash = Splash { debug_frame: true };          // on the device we want to see the box
 //! let deadline = Instant::now() + Duration::from_secs(300);
 //! while Instant::now() < deadline {
@@ -71,12 +75,20 @@ pub fn run(boot: Boot) {
         }
     };
 
+    // The card is opened before the context is built, and the same card is handed to the app
+    // below: it is opened once, and the probe just under this runs on the language the machine
+    // would really boot in.
+    let card = slot2_store::Card::new(&boot.root);
+    card.ensure_layout();
+    let requested = slot2::requested_language(&card, boot.lang_override.as_deref());
+    let lang_dir = boot.root.join("System/Lang");
     let mut ctx = UiCtx::new(
         profile,
-        &boot.lang,
+        &requested,
         crate::font_dirs(&boot.root),
-        Some(&boot.root.join("System/Lang")),
+        Some(&lang_dir),
     );
+    crate::announce_language(&requested, ctx.i18n.code());
 
     // A card asking for the input probe gets it instead of the frontend: one boot, then it
     // goes back to normal.
@@ -90,8 +102,6 @@ pub fn run(boot: Boot) {
     ));
     eprintln!("slot2: input: {} evdev devices", source.device_count());
 
-    let card = slot2_store::Card::new(&boot.root);
-    card.ensure_layout();
     let mut app = App::with_card(
         card,
         crate::core_dir(&boot.root),
@@ -101,6 +111,9 @@ pub fn run(boot: Boot) {
         Screen::List,
     );
     app.set_gauge(slot2_platform::Gauge::detect());
+    // The language the context really loaded, told to the app once: what the card asks for and
+    // what the screen speaks are two different answers, and the picker's badge is the second one.
+    app.set_current_language(ctx.i18n.code());
     eprintln!(
         "slot2: {} carts on the {} shelf",
         app.carts().len(),
@@ -131,9 +144,10 @@ pub fn run(boot: Boot) {
             Some(SinkRequest::Close) => sink = None,
             None => {}
         }
-        // A menu over the game silences it; closing the menu brings it back.
+        // A menu over the game silences it; closing the menu brings it back. The policy is
+        // the app's, so both loops ask the same question.
         if let Some(s) = sink.as_mut() {
-            if matches!(app.screen, Screen::Power(_)) {
+            if app.audio_paused() {
                 s.pause();
             } else {
                 s.resume();
@@ -150,6 +164,10 @@ pub fn run(boot: Boot) {
             }
             return;
         }
+
+        // A language the player chose is applied here — after the frame's own work, before the
+        // frame is drawn — so the screen the player sees next is the one the new context makes.
+        slot2::service_language_request(&mut app, &mut ctx, &lang_dir);
 
         app.draw(&mut canvas, &mut ctx, began);
         if let Err(e) = canvas.present(&mut surface) {

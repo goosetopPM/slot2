@@ -1,0 +1,17 @@
+<!--
+  The front trim around the cart slot on a NES shelf, drawn for SLOT2 in 2026 as a geometric
+  redraw: no manufacturer artwork, drawing or photograph was traced or copied, and there is no
+  logo or wordmark in the file. Stepped side blocks — two square steps each — with one long
+  straight rail across the top is what tells it from the other six.
+
+  White coverage on transparency: `ShelfView` rasterises it, uploads it once and tints it with
+  the machine's lip colour. The opening the cartridge stands in is the empty middle: the rail
+  crosses the top of the trim, not the middle of the mouth.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 264 58">
+  <g fill="#fff">
+    <rect x="0" y="3" width="264" height="3"/>
+    <path d="M 0 12 L 15 12 L 15 22 L 9 22 L 9 34 L 15 34 L 15 54 L 0 54 Z"/>
+    <path d="M 264 12 L 249 12 L 249 22 L 255 22 L 255 34 L 249 34 L 249 54 L 264 54 Z"/>
+  </g>
+</svg>

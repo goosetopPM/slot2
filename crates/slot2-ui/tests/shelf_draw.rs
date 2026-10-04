@@ -4,10 +4,21 @@ use slot2_gfx::{Color, Op, RecordingCanvas, TexId};
 use slot2_platform::{detect, Geometry};
 use slot2_store::Platform;
 use slot2_ui::layout::SafeArea;
+use slot2_ui::shelf::MOUTH_H;
 use slot2_ui::shelf_view::ShelfView;
 use slot2_ui::{skin, UiCtx};
 
 const GEOMETRIES: [Geometry; 3] = [Geometry::W640H480, Geometry::W720H480, Geometry::W720H720];
+
+const PLATFORMS: [Platform; 7] = [
+    Platform::Gb,
+    Platform::Gbc,
+    Platform::Gba,
+    Platform::Nes,
+    Platform::Snes,
+    Platform::Md,
+    Platform::Sms,
+];
 
 fn ctx() -> UiCtx {
     UiCtx::new(detect().profile, "en", Vec::new(), None)
@@ -30,6 +41,19 @@ fn images(canvas: &RecordingCanvas) -> Vec<(TexId, f32, f32, f32, f32, Color)> {
             _ => None,
         })
         .collect()
+}
+
+/// The port trim in a frame: an image as tall as the mouth and as wide as the table says.
+/// Nothing else on the shelf is that shape — a cart is its own aspect, and a cart's plate
+/// lives inside its own outline.
+fn port_in(ops: &[Op], p: Platform) -> Option<(TexId, f32, f32, f32, f32)> {
+    let want = skin::skin(p).port_size;
+    ops.iter().find_map(|o| match o {
+        Op::Image {
+            tex, x, y, w, h, ..
+        } if (w - want.0).abs() < 0.5 && (h - MOUTH_H).abs() < 0.5 => Some((*tex, *x, *y, *w, *h)),
+        _ => None,
+    })
 }
 
 fn titles(n: usize) -> Vec<String> {
@@ -274,6 +298,109 @@ fn scrolling_does_not_re_upload_either() {
     assert!(
         uploads <= 2,
         "a one-second scroll uploaded {uploads} textures"
+    );
+}
+
+#[test]
+fn an_empty_shelf_draws_the_port_trim_where_the_mouth_is() {
+    // A shelf with no games is not a blank screen: the slot, trimmed for this machine, is
+    // what says something is meant to go in it. The trim belongs on the band, centred, and
+    // on every panel.
+    for g in GEOMETRIES {
+        for p in PLATFORMS {
+            let mut v = ShelfView::default();
+            let (canvas, safe) = draw(&mut v, g, p, 0);
+            let want = skin::skin(p).port_size;
+            let (_, x, y, w, h) = port_in(&canvas.ops, p)
+                .unwrap_or_else(|| panic!("{g:?} {p:?}: an empty shelf drew no port trim"));
+            assert_eq!((w, h), (want.0, MOUTH_H), "{g:?} {p:?}: trim size");
+            assert!(
+                (y - (safe.panel_h as f32 - MOUTH_H)).abs() < 0.5,
+                "{g:?} {p:?}: the trim is at {y}, not on the band"
+            );
+            assert!(
+                ((x + w / 2.0) - safe.panel_w as f32 / 2.0).abs() < 1.0,
+                "{g:?} {p:?}: the trim is not centred on the mouth"
+            );
+            assert!(
+                x >= 0.0 && x + w <= safe.panel_w as f32,
+                "{g:?} {p:?}: the trim at {x}..{} leaves the panel",
+                x + w
+            );
+        }
+    }
+}
+
+#[test]
+fn switching_platform_changes_the_port_trim() {
+    // L1/R1 moves between shelves and the trim is part of what changes. Both shelves are
+    // drawn into one canvas with no carts and no titles, so the trim is the only artwork in
+    // play here.
+    let safe = SafeArea::for_geometry(Geometry::W720H480);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx();
+    let mut v = ShelfView::default();
+
+    v.draw(&mut canvas, &mut c, &safe, Platform::Gba, &[]);
+    let split = canvas.ops.len();
+    v.draw(&mut canvas, &mut c, &safe, Platform::Gbc, &[]);
+
+    let (gba_tex, ..) = port_in(&canvas.ops[..split], Platform::Gba)
+        .expect("the Game Boy Advance shelf drew no trim");
+    let (gbc_tex, ..) = port_in(&canvas.ops[split..], Platform::Gbc)
+        .expect("the Game Boy Color shelf drew no trim");
+    assert_ne!(gba_tex, gbc_tex, "both shelves drew one trim texture");
+    // Two shelves of the same cart width, so the ids differing has to mean the drawings do.
+    assert_ne!(
+        skin::skin(Platform::Gba).port,
+        skin::skin(Platform::Gbc).port
+    );
+}
+
+#[test]
+fn the_port_trim_is_cached_across_frames_and_a_scroll() {
+    // The trim is a texture like any other: rasterised once, drawn every frame, and never
+    // re-uploaded because the row moved.
+    let mut v = ShelfView::default();
+    let safe = SafeArea::for_geometry(Geometry::W720H480);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx();
+    v.shelf.set_len(8);
+    let t = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+    v.draw(&mut canvas, &mut c, &safe, Platform::Gba, &t);
+    let settled = canvas.ops.len();
+
+    for _ in 0..5 {
+        v.draw(&mut canvas, &mut c, &safe, Platform::Gba, &t);
+    }
+    v.shelf.right();
+    for _ in 0..40 {
+        v.shelf.update(1.0 / 60.0);
+        v.draw(&mut canvas, &mut c, &safe, Platform::Gba, &t);
+    }
+    // And the row emptying does not disturb the trim either.
+    v.draw(&mut canvas, &mut c, &safe, Platform::Gba, &[]);
+
+    let uploads: Vec<(u32, u32)> = canvas
+        .ops
+        .iter()
+        .skip(settled)
+        .filter_map(|o| match o {
+            Op::UploadAlpha8 { w, h, .. } | Op::UploadRgba8 { w, h, .. } => Some((*w, *h)),
+            _ => None,
+        })
+        .collect();
+    let want = (skin::skin(Platform::Gba).port_size.0 as u32, MOUTH_H as u32);
+    assert!(
+        !uploads.contains(&want),
+        "the trim was re-uploaded: {uploads:?}"
+    );
+    // What a scroll can still cost is one title face, for the cart the selection arrived on:
+    // anything more is artwork being redrawn because the row moved.
+    assert!(
+        uploads.len() <= 1,
+        "a redraw and a scroll uploaded {uploads:?}"
     );
 }
 

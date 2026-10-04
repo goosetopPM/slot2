@@ -1,0 +1,23 @@
+<!--
+  The moulding on a Super Nintendo cartridge's face: the shoulder groove above the label well,
+  a grip line down each side of it, the ridge under the well, and the connector moulding at the
+  bottom. Drawn for SLOT2 in 2026 as a geometric redraw — no manufacturer drawing or external
+  asset was copied, and there is no text or logo here.
+
+  White on transparency, and the alpha is the shape: `ShelfView` rasterises this file into the
+  same coverage mask as the shell and draws it over the shell at 0.8x the shell's colour. It is
+  therefore *not* the light/shadow pair some of the older files carry — one channel, one shape.
+
+  Nothing here crosses the label rect (25, 34, 190x92): the shoulder groove is above it, the
+  grip lines are outside its sides, and the rest is below it. Same 240x190 grid as
+  `snes_cart.svg`.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 190">
+  <g fill="#fff">
+    <rect x="24" y="14" width="192" height="6" rx="3"/>
+    <rect x="12" y="40" width="6" height="78" rx="3"/>
+    <rect x="222" y="40" width="6" height="78" rx="3"/>
+    <rect x="34" y="146" width="172" height="7" rx="3"/>
+    <rect x="74" y="164" width="92" height="7" rx="3"/>
+  </g>
+</svg>

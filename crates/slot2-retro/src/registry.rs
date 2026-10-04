@@ -1,8 +1,11 @@
 //! Platform → core, and the per-platform facts the frontend needs to run one.
 //!
-//! This is the table D-05 and DESIGN §6 describe, trimmed to what M1 needs: which core file
-//! to look for, which options to preset, and how the platform's buttons map. Scaling,
-//! shaders, rewind budgets and alternative cores join it in M2.
+//! This is the table D-05 and DESIGN §6 describe: which core file to look for, which options
+//! to preset, how the platform's buttons map, and what the console's own picture was — its
+//! size, its shape, the rows a television never showed, and the shader program that stands in
+//! for the screen it was played on. Scaling is the display layer's business and is not here.
+
+use std::path::Path;
 
 use crate::JoypadMask;
 
@@ -23,6 +26,9 @@ pub enum Platform {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Core {
     Mgba,
+    /// The Game Boy family's alternative: GB and GBC, where mGBA is the default.
+    Gambatte,
+    /// The GBA's alternative, where mGBA is the default.
     Gpsp,
     Fceumm,
     Snes9x,
@@ -30,10 +36,21 @@ pub enum Core {
 }
 
 impl Core {
+    /// Every core this frontend ships, in the order D-05 lists them.
+    pub const ALL: [Core; 6] = [
+        Core::Mgba,
+        Core::Gambatte,
+        Core::Gpsp,
+        Core::Fceumm,
+        Core::Snes9x,
+        Core::GenesisPlusGx,
+    ];
+
     /// The library's base name, without extension: `mgba_libretro`.
     pub const fn base_name(self) -> &'static str {
         match self {
             Core::Mgba => "mgba_libretro",
+            Core::Gambatte => "gambatte_libretro",
             Core::Gpsp => "gpsp_libretro",
             Core::Fceumm => "fceumm_libretro",
             Core::Snes9x => "snes9x_libretro",
@@ -51,6 +68,51 @@ impl Core {
             "so"
         };
         format!("{}.{ext}", self.base_name())
+    }
+
+    /// Whether this core can run games from `platform`.
+    ///
+    /// Written out rather than derived from [`PLATFORMS`]: that table names each platform's
+    /// *default* core, and gpSP is a GBA alternative that is never anybody's default. A
+    /// question about support answered from that table would say no to a core the frontend
+    /// ships and runs.
+    pub fn supports_platform(self, platform: Platform) -> bool {
+        matches!(
+            (self, platform),
+            (Core::Mgba, Platform::Gb | Platform::Gbc | Platform::Gba)
+                | (Core::Gambatte, Platform::Gb | Platform::Gbc)
+                | (Core::Gpsp, Platform::Gba)
+                | (Core::Fceumm, Platform::Nes)
+                | (Core::Snes9x, Platform::Snes)
+                | (Core::GenesisPlusGx, Platform::Md | Platform::Sms)
+        )
+    }
+
+    /// Which core a library file at `path` is, from its own name.
+    ///
+    /// A card can name a core the frontend did not choose, and the file that was actually
+    /// loaded is the truth about which parser will read a cheat code — not the row that was
+    /// picked at launch. So the answer is read back off the path.
+    ///
+    /// The name is compared ASCII case-insensitively (Windows hands back whatever case the
+    /// file was written with), and `.dll`, `.so` and `.dylib` are all recognised on every
+    /// host: a card is written on one machine and read on another. The directory says nothing
+    /// about the core, and a name that only contains a core's name — `libmgba_libretro.so`,
+    /// `mgba_libretro.so.1`, `mgba_libretro.dll.bak` — is not that core.
+    pub fn from_library_path(path: &Path) -> Option<Self> {
+        let name = path.file_name()?.to_str()?;
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((stem, ext)) => (stem, Some(ext)),
+            None => (name, None),
+        };
+        if let Some(ext) = ext {
+            if !matches!(ext.to_ascii_lowercase().as_str(), "dll" | "so" | "dylib") {
+                return None;
+            }
+        }
+        Self::ALL
+            .into_iter()
+            .find(|core| stem.eq_ignore_ascii_case(core.base_name()))
     }
 }
 
@@ -107,6 +169,23 @@ impl Overscan {
             bottom: n,
         }
     }
+}
+
+/// The built-in shader program a console's picture defaults to when a game has not chosen one.
+///
+/// A property of the console, not of the machine or the core running it: a Game Boy's own
+/// screen is what an LCD grid stands in for, and a console that fed a television wants its
+/// scanlines back. There is no `Off` here — every platform has a default effect — and turning
+/// shaders off is a per-game decision the store owns.
+///
+/// Deliberately neither `slot2_store::ShaderPreset` nor `slot2_gfx::ShaderEffect`: this crate
+/// depends on neither, and the frontend maps between them at one boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PlatformShader {
+    SharpBilinear,
+    Lcd3x,
+    ZfastCrt,
+    Scanline,
 }
 
 /// What the machine running a core can afford, and how much screen it has to show it on.
@@ -172,6 +251,9 @@ pub struct PlatformDef {
     pub aspect: Aspect,
     /// What to crop by default. Only the NES asks for any.
     pub overscan: Overscan,
+    /// The shader program this console's picture defaults to. A game's own choice overrides
+    /// it; the core, the screen size and the machine it runs on do not.
+    pub shader_default: PlatformShader,
     /// How much of this console's past to keep for rewinding.
     pub rewind: crate::rewind::RewindBudget,
 }
@@ -179,6 +261,11 @@ pub struct PlatformDef {
 /// mGBA plays the three Game Boy platforms; the rest have one core each (M2 adds gpSP as a
 /// GBA alternative). Options are the minimum that makes a core behave: skip the BIOS splash
 /// when there is no BIOS to show, and let the frontend own frame timing.
+///
+/// The shader defaults are the ones DESIGN §5 settled on: a handheld console gets the LCD grid
+/// its own screen had, and a console that drove a television gets scanlines. Which console a
+/// game came off is the whole of the decision — the core running it, the panel it lands on
+/// and the game itself all change nothing.
 pub const PLATFORMS: &[PlatformDef] = &[
     PlatformDef {
         platform: Platform::Gb,
@@ -188,6 +275,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (160, 144),
         aspect: Aspect::Square,
         overscan: Overscan::NONE,
+        shader_default: PlatformShader::Lcd3x,
         rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
@@ -198,6 +286,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (160, 144),
         aspect: Aspect::Square,
         overscan: Overscan::NONE,
+        shader_default: PlatformShader::Lcd3x,
         rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
@@ -208,6 +297,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (240, 160),
         aspect: Aspect::Square,
         overscan: Overscan::NONE,
+        shader_default: PlatformShader::Lcd3x,
         rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
@@ -226,6 +316,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (256, 240),
         aspect: Aspect::Pixel { num: 8, den: 7 },
         overscan: Overscan::rows(8),
+        shader_default: PlatformShader::ZfastCrt,
         rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
@@ -236,6 +327,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (256, 224),
         aspect: Aspect::Pixel { num: 8, den: 7 },
         overscan: Overscan::NONE,
+        shader_default: PlatformShader::ZfastCrt,
         rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
@@ -246,6 +338,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (320, 224),
         aspect: Aspect::Display { num: 4, den: 3 },
         overscan: Overscan::NONE,
+        shader_default: PlatformShader::ZfastCrt,
         rewind: crate::rewind::RewindBudget::DEFAULT,
     },
     PlatformDef {
@@ -256,15 +349,34 @@ pub const PLATFORMS: &[PlatformDef] = &[
         native: (256, 192),
         aspect: Aspect::Pixel { num: 8, den: 7 },
         overscan: Overscan::NONE,
+        shader_default: PlatformShader::ZfastCrt,
         rewind: crate::rewind::RewindBudget::DEFAULT,
     },
 ];
 
-/// The options to launch this platform with.
+/// The options to launch this platform's own core with.
 ///
-/// Three sources, in order: what the console needs whatever it runs on (`PlatformDef`),
-/// what this device can afford (`Tuning`), and whether a BIOS is on the card. A per-game
-/// `.ini` overrides the lot, later, in `Session`.
+/// The wrapper for callers that have no core to name — a shelf laying itself out, the tests
+/// that read a platform — and it is [`options_for_core`] with the platform's default, which is
+/// the core every one of these platforms ships with.
+pub fn options_for(
+    platform: Platform,
+    bios_present: bool,
+    tuning: Tuning,
+) -> Vec<(String, String)> {
+    let core = def(platform).default_core;
+    options_for_core(core, platform, bios_present, tuning)
+        .expect("a platform's default core runs that platform")
+}
+
+/// The options to launch `core` on `platform` with, or `None` when that core cannot run the
+/// console at all.
+///
+/// The options belong to the core that will read them: an alternative core must not be handed
+/// the default's `mgba_*` keys, which it would ignore at best and misread at worst. Three
+/// sources, in order: what the console needs whatever core runs it (`PlatformDef`), what this
+/// device can afford (`Tuning`), and whether a BIOS is on the card. A per-game `.ini`
+/// overrides the lot, later, in `Session`.
 ///
 /// The values here started as the ones the author had settled on in spruceOS for an RG SP
 /// after using it, which is better evidence than defaults nobody chose. They are *not*
@@ -275,11 +387,15 @@ pub const PLATFORMS: &[PlatformDef] = &[
 /// Deliberately absent: every core's own aspect-ratio and overscan option. This frontend
 /// decides both itself, from `PlatformDef::aspect` and `PlatformDef::overscan`, so letting
 /// a core also correct them would apply the correction twice.
-pub fn options_for(
+pub fn options_for_core(
+    core: Core,
     platform: Platform,
     bios_present: bool,
     tuning: Tuning,
-) -> Vec<(String, String)> {
+) -> Option<Vec<(String, String)>> {
+    if !core.supports_platform(platform) {
+        return None;
+    }
     let def = def(platform);
     let mut out: Vec<(String, String)> = def
         .options
@@ -288,8 +404,8 @@ pub fn options_for(
         .collect();
 
     let mut set = |k: &str, v: &str| out.push((k.to_string(), v.to_string()));
-    match def.default_core {
-        Core::Mgba | Core::Gpsp => {
+    match core {
+        Core::Mgba => {
             // mGBA looks for a BIOS on its own (`mgba_use_bios` is ON by default) and falls
             // back to its own high-level boot when there is none. Skipping the intro is
             // about the intro, not about the BIOS.
@@ -330,7 +446,7 @@ pub fn options_for(
             // A DMG has no colour to correct at all; what it has is a palette, and the
             // green of the original LCD is what a Game Boy shelf is for. (mGBA's own
             // default is Grayscale, which is nobody's memory of the hardware.)
-            match def.platform {
+            match platform {
                 Platform::Gba => set("mgba_color_correction", "GBA"),
                 Platform::Gbc => set("mgba_color_correction", "GBC"),
                 Platform::Gb => {
@@ -380,8 +496,28 @@ pub fn options_for(
             // that were shipped relying on it not happening.
             set("genesis_plus_gx_force_dtack", "enabled");
         }
+        // The two alternatives have no option this frontend has anything to say about yet. A
+        // guessed key would be a setting that does nothing while looking like one, so they get
+        // the platform's own options and nothing else.
+        Core::Gpsp | Core::Gambatte => {}
     }
-    out
+    Some(out)
+}
+
+/// The cores that can run `platform`, best first.
+///
+/// The first entry is always [`PlatformDef::default_core`] — the one a launch uses unless the
+/// player has said otherwise — and the rest are the alternatives this frontend ships. The
+/// in-game Core row will read this list and keep the entries whose library is actually on the
+/// card, which is why the order is part of the contract and not just the membership.
+pub fn supported_cores(platform: Platform) -> &'static [Core] {
+    match platform {
+        Platform::Gb | Platform::Gbc => &[Core::Mgba, Core::Gambatte],
+        Platform::Gba => &[Core::Mgba, Core::Gpsp],
+        Platform::Nes => &[Core::Fceumm],
+        Platform::Snes => &[Core::Snes9x],
+        Platform::Md | Platform::Sms => &[Core::GenesisPlusGx],
+    }
 }
 
 pub fn def(platform: Platform) -> &'static PlatformDef {

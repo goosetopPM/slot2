@@ -10,11 +10,11 @@ use slot2_gfx::{Color, Op, RecordingCanvas};
 use slot2_platform::clock::SET_AFTER;
 use slot2_platform::{Battery, Charge, Geometry};
 use slot2_ui::hud::{
-    ink, Hud, BOLT_GAP, BOLT_W, GAUGE_H, GAUGE_W, HUD_H, HUD_MARGIN, INK, LOW_INK, LOW_PERCENT,
-    NUB_W, WALL,
+    ink, Hud, TimeControl, BOLT_GAP, BOLT_W, GAUGE_H, GAUGE_W, HUD_H, HUD_MARGIN, INK, LOW_INK,
+    LOW_PERCENT, NUB_W, WALL,
 };
 use slot2_ui::layout::SafeArea;
-use slot2_ui::UiCtx;
+use slot2_ui::{UiCtx, PX_HINT};
 
 const GEOMETRIES: [Geometry; 3] = [Geometry::W640H480, Geometry::W720H480, Geometry::W720H720];
 
@@ -22,7 +22,11 @@ const GEOMETRIES: [Geometry; 3] = [Geometry::W640H480, Geometry::W720H480, Geome
 const NOON: i64 = SET_AFTER + 12 * 3600 + 34 * 60;
 
 fn ctx(g: Geometry) -> UiCtx {
-    let mut c = UiCtx::new(slot2_platform::detect().profile, "en", Vec::new(), None);
+    ctx_lang(g, "en")
+}
+
+fn ctx_lang(g: Geometry, lang: &str) -> UiCtx {
+    let mut c = UiCtx::new(slot2_platform::detect().profile, lang, Vec::new(), None);
     c.safe = SafeArea::for_geometry(g);
     c
 }
@@ -370,6 +374,174 @@ fn the_nub_is_on_the_positive_end() {
         nub.0 >= capsule_right - 0.01,
         "the nub at {} is inside a capsule that ends at {capsule_right}",
         nub.0
+    );
+}
+
+// ------------------------------------------------------------------ the time-control badge
+
+/// A frame with nothing on it but the badge: the method draws only that, so every op here is
+/// the badge's own.
+fn badge(g: Geometry, lang: &str, control: Option<TimeControl>) -> (RecordingCanvas, SafeArea) {
+    let safe = SafeArea::for_geometry(g);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx_lang(g, lang);
+    let mut hud = Hud::default();
+    hud.draw_time_control(&mut canvas, &mut c, &safe, control);
+    (canvas, safe)
+}
+
+/// What the badge should say, from the message itself.
+fn expected_text(g: Geometry, lang: &str, control: TimeControl) -> String {
+    let c = ctx_lang(g, lang);
+    match control {
+        TimeControl::Rewind => c.i18n.t("time-rewind"),
+        TimeControl::FastForward { speed } => c.i18n.t_args(
+            "time-fast-forward",
+            &[("speed", slot2_i18n::Arg::from(speed))],
+        ),
+    }
+}
+
+#[test]
+fn no_time_control_draws_no_badge() {
+    for g in GEOMETRIES {
+        let (c, _) = badge(g, "en", None);
+        assert!(
+            drawn(&c).is_empty(),
+            "{g:?} drew {} ops with no time control",
+            drawn(&c).len()
+        );
+    }
+}
+
+#[test]
+fn the_badge_is_one_plate_with_the_localized_word_on_it() {
+    for lang in ["en", "ko"] {
+        for control in [
+            TimeControl::Rewind,
+            TimeControl::FastForward { speed: 4 },
+            TimeControl::FastForward { speed: 8 },
+        ] {
+            let g = Geometry::W720H480;
+            let (c, _) = badge(g, lang, Some(control));
+            let case = format!("{lang}/{control:?}");
+            assert!(
+                !c.frame().iter().any(|o| matches!(o, Op::Clear(_))),
+                "{case}: the badge cleared the frame"
+            );
+            let plates: Vec<_> = rects(&c)
+                .into_iter()
+                .filter(|(_, _, _, h, _)| (*h - HUD_H).abs() < 0.01)
+                .collect();
+            assert_eq!(plates.len(), 1, "{case}: one plate, got {plates:?}");
+            let texts = images(&c);
+            assert_eq!(texts.len(), 1, "{case}: one line of text, got {texts:?}");
+
+            // The word is the message, and the plate is that plus even padding either side.
+            let want = expected_text(g, lang, control);
+            let mut c2 = ctx_lang(g, lang);
+            let want_w = slot2_ui::face::measure(&mut c2, &want, PX_HINT);
+            let (px, _, pw, _, pcolor) = plates[0];
+            let (tx, _, tw, _, _) = texts[0];
+            assert!(
+                (tw - want_w).abs() < 0.51,
+                "{case}: drew {tw} wide, wanted {want_w} for {want:?}"
+            );
+            assert!(
+                (tx - px - ((px + pw) - (tx + tw))).abs() < 0.51,
+                "{case}: padding {tx}-{px} against {} on the right",
+                (px + pw) - (tx + tw)
+            );
+            assert!(pcolor.a < 1.0, "{case}: the plate is opaque");
+        }
+    }
+}
+
+#[test]
+fn the_badge_is_centred_on_the_panel_at_the_top_of_it() {
+    for g in GEOMETRIES {
+        for lang in ["en", "ko"] {
+            for control in [TimeControl::Rewind, TimeControl::FastForward { speed: 4 }] {
+                let (c, safe) = badge(g, lang, Some(control));
+                let ops = drawn(&c);
+                let case = format!("{g:?}/{lang}/{control:?}");
+                assert!(!ops.is_empty(), "{case}: nothing drawn");
+                let (left, top, right, bottom) = bounds(&ops);
+                assert!(
+                    (top - HUD_MARGIN).abs() < 0.51,
+                    "{case}: top at {top}, wanted {HUD_MARGIN}"
+                );
+                assert!(
+                    bottom <= HUD_MARGIN + HUD_H + 0.51,
+                    "{case}: {bottom} deep; the band is {HUD_H}"
+                );
+                let mid = safe.panel_w as f32 / 2.0;
+                assert!(
+                    ((left + right) / 2.0 - mid).abs() < 0.51,
+                    "{case}: centred at {} on a {mid}-wide panel",
+                    (left + right) / 2.0
+                );
+                assert!(
+                    left >= 0.0 && right <= safe.panel_w as f32,
+                    "{case}: {left}..{right} off a {} panel",
+                    safe.panel_w
+                );
+                // The square panel's safe area starts 120 px down. The badge does not
+                // follow it: it belongs to the screen, like the corners (DESIGN 167).
+                if g == Geometry::W720H720 {
+                    assert!(
+                        bottom < safe.y as f32,
+                        "{case}: the badge followed the safe area down to {bottom}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_badge_that_does_not_change_costs_nothing_to_redraw() {
+    let g = Geometry::W720H480;
+    let safe = SafeArea::for_geometry(g);
+    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+    let mut c = ctx(g);
+    let mut hud = Hud::default();
+    let uploads = |ops: &[Op]| {
+        ops.iter()
+            .filter(|o| matches!(o, Op::UploadAlpha8 { .. } | Op::UploadRgba8 { .. }))
+            .count()
+    };
+    let fast = Some(TimeControl::FastForward { speed: 4 });
+
+    hud.draw_time_control(&mut canvas, &mut c, &safe, fast);
+    assert!(
+        uploads(&canvas.ops) > 0,
+        "the first badge uploaded nothing at all"
+    );
+
+    let before = canvas.ops.len();
+    for _ in 0..8 {
+        hud.draw_time_control(&mut canvas, &mut c, &safe, fast);
+    }
+    assert_eq!(
+        uploads(&canvas.ops[before..]),
+        0,
+        "eight unchanged badges uploaded something"
+    );
+
+    // The other thing says a different word: one new face, and then it settles too.
+    let before = canvas.ops.len();
+    hud.draw_time_control(&mut canvas, &mut c, &safe, Some(TimeControl::Rewind));
+    let switched = uploads(&canvas.ops[before..]);
+    assert!(switched <= 1, "switching badges uploaded {switched} faces");
+    let before = canvas.ops.len();
+    for _ in 0..8 {
+        hud.draw_time_control(&mut canvas, &mut c, &safe, Some(TimeControl::Rewind));
+    }
+    assert_eq!(
+        uploads(&canvas.ops[before..]),
+        0,
+        "the switched badge kept uploading"
     );
 }
 

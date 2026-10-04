@@ -14,7 +14,7 @@
 //!   ```
 //!   fragment: `gl_FragColor = texture2D(u_tex, v_uv) * v_col;` with the precision line behind
 //!   `#ifdef GL_ES`. Solid rects use a 1x1 white RGBA texture uploaded at creation, so one
-//!   program serves everything. Compile/link errors → `GfxError::Shader(log)`.
+//!   program serves every ordinary draw. Compile/link errors → `GfxError::Shader(log)`.
 //! - Alpha8 uploads: store as `GL_LUMINANCE_ALPHA`? No — simplest portable route is to expand
 //!   on the CPU to RGBA8 with rgb = 255 and a = coverage, then the fragment math
 //!   `texel * tint` gives `tint.rgb` at `coverage * tint.a`, exactly the contract.
@@ -33,10 +33,45 @@
 //!   `Image`.
 //! - `free(tex)`: `gl::DeleteTextures`. `TexId(0)` is never handed out.
 //! - Every GL call is `unsafe`; keep them inside this module. No `unwrap()` on GL state.
+//! - Built-in shader effects ([`crate::ShaderEffect`], D-10): one extra program each, built at
+//!   construction from `shader.rs`. A preset whose program does not build costs that preset
+//!   and nothing else — it is drawn as a plain image — so the canvas only fails to be created
+//!   when the *default* program will not build. The effect quad carries the source texture
+//!   size, the destination size and the UV crop as uniforms, and is drawn outside the vertex
+//!   batch: it is one texture, once per frame, and mixing it into the batch would need a
+//!   texture key that carries a program.
 
+use crate::shader::{self, ShaderEffect};
 use crate::{fit, glfn, Canvas, Color, GfxError, Image, Surface, TexId};
 use std::collections::HashMap;
 use std::ffi::CString;
+
+/// The program every ordinary draw uses: rects, images, masks, the HUD, and the final present.
+const DEFAULT_VERTEX_SOURCE: &str = "
+                attribute vec2 a_pos;
+                attribute vec2 a_uv;
+                attribute vec4 a_col;
+                uniform vec2 u_panel;
+                varying vec2 v_uv;
+                varying vec4 v_col;
+                void main() {
+                    v_uv = a_uv;
+                    v_col = a_col;
+                    vec2 clip = (a_pos / u_panel) * 2.0 - 1.0;
+                    gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+                }
+            ";
+const DEFAULT_FRAGMENT_SOURCE: &str = "
+                #ifdef GL_ES
+                precision mediump float;
+                #endif
+                varying vec2 v_uv;
+                varying vec4 v_col;
+                uniform sampler2D u_tex;
+                void main() {
+                    gl_FragColor = texture2D(u_tex, v_uv) * v_col;
+                }
+            ";
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -44,6 +79,17 @@ struct Vertex {
     pos: [f32; 2],
     uv: [f32; 2],
     col: [f32; 4],
+}
+
+/// One effect's program, with the uniform locations its draw needs. Built once when the canvas
+/// is, deleted once when it goes.
+struct EffectProgram {
+    program: gl::types::GLuint,
+    u_panel: gl::types::GLint,
+    u_origin: gl::types::GLint,
+    u_dst: gl::types::GLint,
+    u_src: gl::types::GLint,
+    u_uv_rect: gl::types::GLint,
 }
 
 pub struct GlCanvas {
@@ -61,6 +107,11 @@ pub struct GlCanvas {
     textures: HashMap<TexId, (gl::types::GLuint, u32, u32)>,
     next_tex_id: u32,
     origin: (f32, f32),
+    /// One program per effect, indexed the way `ShaderEffect::index` says, and the driver log
+    /// of any that did not build. Keeping the log rather than a bare flag is what lets a
+    /// caller say *why* an effect is missing instead of only that it is.
+    effects: [Option<EffectProgram>; 4],
+    errors: [Option<String>; 4],
 }
 
 impl GlCanvas {
@@ -111,69 +162,25 @@ impl GlCanvas {
             fbo
         };
 
-        let program = {
-            let vs = shader(
-                gl::VERTEX_SHADER,
-                "
-                attribute vec2 a_pos;
-                attribute vec2 a_uv;
-                attribute vec4 a_col;
-                uniform vec2 u_panel;
-                varying vec2 v_uv;
-                varying vec4 v_col;
-                void main() {
-                    v_uv = a_uv;
-                    v_col = a_col;
-                    vec2 clip = (a_pos / u_panel) * 2.0 - 1.0;
-                    gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
-                }
-            ",
-            )?;
-            let fs = shader(
-                gl::FRAGMENT_SHADER,
-                "
-                #ifdef GL_ES
-                precision mediump float;
-                #endif
-                varying vec2 v_uv;
-                varying vec4 v_col;
-                uniform sampler2D u_tex;
-                void main() {
-                    gl_FragColor = texture2D(u_tex, v_uv) * v_col;
-                }
-            ",
-            )?;
-            let p = unsafe { gl::CreateProgram() };
-            unsafe {
-                gl::AttachShader(p, vs);
-                gl::AttachShader(p, fs);
-                gl::BindAttribLocation(p, 0, CString::new("a_pos").unwrap().as_ptr());
-                gl::BindAttribLocation(p, 1, CString::new("a_uv").unwrap().as_ptr());
-                gl::BindAttribLocation(p, 2, CString::new("a_col").unwrap().as_ptr());
-                gl::LinkProgram(p);
-                gl::DeleteShader(vs);
-                gl::DeleteShader(fs);
-                let mut ok = 0;
-                gl::GetProgramiv(p, gl::LINK_STATUS, &mut ok);
-                if ok == 0 {
-                    return Err(GfxError::Shader(info_log(
-                        p,
-                        gl::GetProgramiv,
-                        gl::GetProgramInfoLog,
-                    )));
-                }
-            }
-            p
-        };
+        let program = link_program(DEFAULT_VERTEX_SOURCE, DEFAULT_FRAGMENT_SOURCE)
+            .map_err(GfxError::Shader)?;
 
         let u_panel = unsafe {
             gl::UseProgram(program);
-            gl::Uniform1i(
-                gl::GetUniformLocation(program, CString::new("u_tex").unwrap().as_ptr()),
-                0,
-            );
-            gl::GetUniformLocation(program, CString::new("u_panel").unwrap().as_ptr())
+            gl::Uniform1i(uniform_location(program, "u_tex"), 0);
+            uniform_location(program, "u_panel")
         };
+
+        let mut effects: [Option<EffectProgram>; 4] = [None, None, None, None];
+        let mut errors: [Option<String>; 4] = [None, None, None, None];
+        for effect in ShaderEffect::ALL {
+            match effect_program(effect) {
+                Ok(p) => effects[effect.index()] = Some(p),
+                // Not a failure to be reported up: the canvas exists, and this one draw falls
+                // back to the ordinary image program. The log waits for whoever asks.
+                Err(log) => errors[effect.index()] = Some(log),
+            }
+        }
 
         let vbo = unsafe {
             let mut vbo = 0;
@@ -194,6 +201,8 @@ impl GlCanvas {
             textures: HashMap::new(),
             next_tex_id: 1,
             origin: (0.0, 0.0),
+            effects,
+            errors,
         };
 
         // The offscreen target is bound but nothing has told GL how big it is. A fresh
@@ -213,6 +222,19 @@ impl GlCanvas {
         canvas.batch_tex = canvas.white_tex;
 
         Ok(canvas)
+    }
+
+    /// Whether this canvas can draw `effect`. False means the draw still happens, as a plain
+    /// image: a preset the device's driver would not compile is a preset that is not there.
+    pub fn shader_available(&self, effect: ShaderEffect) -> bool {
+        self.effects[effect.index()].is_some()
+    }
+
+    /// Why `effect` is unavailable: the driver's compile or link log, or `None` when it built.
+    /// The string is kept for the life of the canvas, so a caller may show it or log it at
+    /// whatever moment suits it.
+    pub fn shader_error(&self, effect: ShaderEffect) -> Option<&str> {
+        self.errors[effect.index()].as_deref()
     }
 
     fn flush(&mut self) {
@@ -505,6 +527,115 @@ impl Canvas for GlCanvas {
             gl::Uniform2f(self.u_panel, self.panel.0 as f32, self.panel.1 as f32);
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn image_effect_uv(
+        &mut self,
+        tex: TexId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uv: [f32; 4],
+        tint: Color,
+        effect: ShaderEffect,
+    ) {
+        // No program: the same picture without the effect, which is also exactly what a canvas
+        // that cannot do effects at all would have drawn.
+        let Some(p) = self.effects[effect.index()].as_ref() else {
+            self.image_uv(tex, x, y, w, h, uv, tint);
+            return;
+        };
+        let (program, u_panel, u_origin, u_dst, u_src, u_uv_rect) = (
+            p.program,
+            p.u_panel,
+            p.u_origin,
+            p.u_dst,
+            p.u_src,
+            p.u_uv_rect,
+        );
+        // An id this canvas does not have behaves the way the batched path behaves with one:
+        // the texture name 0 is bound and the quad is drawn. Sizes of 1 keep the shader's
+        // reciprocals finite either way.
+        let (name, tw, th) = match self.textures.get(&tex) {
+            Some(&(name, tw, th)) => (name, tw.max(1), th.max(1)),
+            None => (0, 1, 1),
+        };
+
+        // Anything queued belongs to the ordinary program: draw it before switching.
+        self.flush();
+        let (ox, oy) = self.origin;
+        let (dx, dy) = (x + ox, y + oy);
+        let c = [tint.r, tint.g, tint.b, tint.a];
+        let [u0, v0, u1, v1] = uv;
+        let quad = [
+            Vertex {
+                pos: [dx, dy],
+                uv: [u0, v0],
+                col: c,
+            },
+            Vertex {
+                pos: [dx + w, dy],
+                uv: [u1, v0],
+                col: c,
+            },
+            Vertex {
+                pos: [dx, dy + h],
+                uv: [u0, v1],
+                col: c,
+            },
+            Vertex {
+                pos: [dx + w, dy],
+                uv: [u1, v0],
+                col: c,
+            },
+            Vertex {
+                pos: [dx + w, dy + h],
+                uv: [u1, v1],
+                col: c,
+            },
+            Vertex {
+                pos: [dx, dy + h],
+                uv: [u0, v1],
+                col: c,
+            },
+        ];
+        unsafe {
+            gl::UseProgram(program);
+            gl::Uniform2f(u_panel, self.panel.0 as f32, self.panel.1 as f32);
+            gl::Uniform2f(u_origin, dx, dy);
+            gl::Uniform2f(u_dst, w, h);
+            gl::Uniform2f(u_src, tw as f32, th as f32);
+            gl::Uniform4f(u_uv_rect, u0, v0, u1, v1);
+            gl::Enable(gl::BLEND);
+            gl::BlendFuncSeparate(
+                gl::SRC_ALPHA,
+                gl::ONE_MINUS_SRC_ALPHA,
+                gl::ONE,
+                gl::ONE_MINUS_SRC_ALPHA,
+            );
+            gl::BindTexture(gl::TEXTURE_2D, name);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (quad.len() * std::mem::size_of::<Vertex>()) as isize,
+                quad.as_ptr() as *const _,
+                gl::STREAM_DRAW,
+            );
+            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 32, std::ptr::null());
+            gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, 32, 8 as *const _);
+            gl::VertexAttribPointer(2, 4, gl::FLOAT, gl::FALSE, 32, 16 as *const _);
+            gl::EnableVertexAttribArray(0);
+            gl::EnableVertexAttribArray(1);
+            gl::EnableVertexAttribArray(2);
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
+
+            // Back to the ordinary program before returning. The batch is empty, so nothing of
+            // the effect can reach the HUD, a menu, or a rect drawn after this: those all
+            // queue against `self.program` and draw under it.
+            gl::UseProgram(self.program);
+        }
+    }
 }
 
 impl Drop for GlCanvas {
@@ -517,13 +648,28 @@ impl Drop for GlCanvas {
             }
             gl::DeleteBuffers(1, &self.vbo);
             gl::DeleteProgram(self.program);
+            // Exactly the programs that were built: a fallback has no program here to delete,
+            // and a program whose link failed was already deleted by `link_program`.
+            for p in self.effects.iter().flatten() {
+                gl::DeleteProgram(p.program);
+            }
         }
     }
 }
 
-fn shader(kind: gl::types::GLenum, src: &str) -> Result<gl::types::GLuint, GfxError> {
+/// Compile one stage. The shader object is deleted on every path that does not hand it back,
+/// and the error is the driver's own log rather than a flag: whoever cannot use this program
+/// needs the reason.
+fn compile_shader(kind: gl::types::GLenum, src: &str) -> Result<gl::types::GLuint, String> {
     let s = unsafe { gl::CreateShader(kind) };
-    let c_src = CString::new(src.replace("\r\n", "\n")).unwrap();
+    let c_src = match CString::new(src.replace("\r\n", "\n")) {
+        Ok(c) => c,
+        // Not reachable with the sources in this crate, and not worth a panic if it ever is.
+        Err(_) => {
+            unsafe { gl::DeleteShader(s) };
+            return Err("the shader source has a NUL in it".into());
+        }
+    };
     unsafe {
         gl::ShaderSource(s, 1, &c_src.as_ptr(), std::ptr::null());
         gl::CompileShader(s);
@@ -532,10 +678,71 @@ fn shader(kind: gl::types::GLenum, src: &str) -> Result<gl::types::GLuint, GfxEr
         if ok == 0 {
             let log = info_log(s, gl::GetShaderiv, gl::GetShaderInfoLog);
             gl::DeleteShader(s);
-            return Err(GfxError::Shader(log));
+            return Err(log);
         }
     }
     Ok(s)
+}
+
+/// Compile and link one program, freeing every GL object on every path.
+///
+/// Both stages are deleted once they are linked in (they are no longer needed and the program
+/// keeps its own copy), and a failed link deletes the program as well: a program that never
+/// worked is not something to hold on to, and it used to be left behind here.
+fn link_program(vert: &str, frag: &str) -> Result<gl::types::GLuint, String> {
+    let vs = compile_shader(gl::VERTEX_SHADER, vert)?;
+    let fs = match compile_shader(gl::FRAGMENT_SHADER, frag) {
+        Ok(s) => s,
+        Err(log) => {
+            unsafe { gl::DeleteShader(vs) };
+            return Err(log);
+        }
+    };
+    let p = unsafe { gl::CreateProgram() };
+    unsafe {
+        gl::AttachShader(p, vs);
+        gl::AttachShader(p, fs);
+        // One vertex layout for every program, so the batched VBO and the effect quad can be
+        // filled from the same `Vertex` array.
+        gl::BindAttribLocation(p, 0, CString::new("a_pos").unwrap().as_ptr());
+        gl::BindAttribLocation(p, 1, CString::new("a_uv").unwrap().as_ptr());
+        gl::BindAttribLocation(p, 2, CString::new("a_col").unwrap().as_ptr());
+        gl::LinkProgram(p);
+        gl::DeleteShader(vs);
+        gl::DeleteShader(fs);
+        let mut ok = 0;
+        gl::GetProgramiv(p, gl::LINK_STATUS, &mut ok);
+        if ok == 0 {
+            let log = info_log(p, gl::GetProgramiv, gl::GetProgramInfoLog);
+            gl::DeleteProgram(p);
+            return Err(log);
+        }
+    }
+    Ok(p)
+}
+
+/// Where a uniform lives, or -1 when the program does not have it (which is legal to pass to
+/// `glUniform*` and means "no such thing to set").
+fn uniform_location(program: gl::types::GLuint, name: &str) -> gl::types::GLint {
+    let c = CString::new(name).expect("uniform names here are string literals");
+    unsafe { gl::GetUniformLocation(program, c.as_ptr()) }
+}
+
+/// Build the program for one effect, with the uniform locations its draw needs.
+fn effect_program(effect: ShaderEffect) -> Result<EffectProgram, String> {
+    let program = link_program(shader::VERTEX_SOURCE, &shader::fragment_source(effect))?;
+    unsafe {
+        gl::UseProgram(program);
+        gl::Uniform1i(uniform_location(program, "u_tex"), 0);
+    }
+    Ok(EffectProgram {
+        program,
+        u_panel: uniform_location(program, "u_panel"),
+        u_origin: uniform_location(program, "u_origin"),
+        u_dst: uniform_location(program, "u_dst"),
+        u_src: uniform_location(program, "u_src"),
+        u_uv_rect: uniform_location(program, "u_uv_rect"),
+    })
 }
 
 fn info_log(

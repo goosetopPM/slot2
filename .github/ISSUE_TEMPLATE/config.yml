@@ -1,0 +1,9 @@
+# GitHub issue-template configuration for SLOT2.
+#
+# Blank issues stay enabled on purpose: the three structured forms cover bugs, device
+# compatibility and translation work only, so a question or a topic that fits none of them
+# must still be possible to open.
+#
+# No contact links: the project has no verified chat, forum, donation or security channel to
+# point at, and naming one would promise reachability that does not exist yet.
+blank_issues_enabled: true

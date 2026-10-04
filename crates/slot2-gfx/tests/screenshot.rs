@@ -3,7 +3,7 @@
 //! it the test passes trivially (CI runners have no GPU). It also writes what it drew to
 //! `target/gfx-screenshot.png` so a human can look.
 
-use slot2_gfx::{Canvas, Color, GlCanvas, HostSurface, Image};
+use slot2_gfx::{Canvas, Color, GlCanvas, HostSurface, Image, ShaderEffect, TexId};
 
 fn enabled() -> bool {
     std::env::var("SLOT2_GFX_TEST")
@@ -145,6 +145,151 @@ fn draws_rects_and_masks_where_asked() {
     canvas.free(tex2);
 
     check_texture_rewrite(&mut canvas);
+    check_shader_effects(&mut canvas);
+}
+
+/// The effect programs, and that drawing through one changes the picture without changing
+/// anything drawn after it.
+///
+/// A phase of the GL test above rather than a test of its own: one event loop per process.
+fn check_shader_effects(canvas: &mut GlCanvas) {
+    for effect in ShaderEffect::ALL {
+        assert!(
+            canvas.shader_available(effect),
+            "{effect:?} did not build: {}",
+            canvas.shader_error(effect).unwrap_or("no log")
+        );
+        assert!(
+            canvas.shader_error(effect).is_none(),
+            "{effect:?} built and still reported a failure"
+        );
+    }
+
+    // A hard-edged checker, drawn far bigger than it is: every one of the four has something
+    // to do to a boundary or to a row, so a picture that comes back byte-identical means the
+    // program never ran.
+    let mut checker = vec![0u8; 8 * 8 * 4];
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            let i = ((y * 8 + x) * 4) as usize;
+            let light = (x + y) % 2 == 0;
+            let v = if light { 255 } else { 32 };
+            checker[i..i + 4].copy_from_slice(&[v, v, v, 255]);
+        }
+    }
+    let tex = canvas.upload_rgba8(8, 8, &checker);
+    let quad = (100.0f32, 80.0f32, 400.0f32, 300.0f32);
+
+    let base = draw_effect_scene(canvas, tex, quad, None);
+    let mut shots: Vec<(ShaderEffect, Image)> = Vec::new();
+    for effect in ShaderEffect::ALL {
+        let img = draw_effect_scene(canvas, tex, quad, Some(effect));
+        // The rect drawn after the effect, and only after it, lands on the same colour in all
+        // five runs: the effect's program and uniforms did not leak into the ordinary path.
+        for (px, py) in [(30u32, 405u32), (45, 415)] {
+            assert!(
+                near(img.pixel(px, py), [0, 200, 255, 255], 1),
+                "{effect:?} changed the rect drawn after it: {:?}",
+                img.pixel(px, py)
+            );
+        }
+        let d = pixel_difference(&base, &img, quad);
+        assert!(
+            d > 200_000,
+            "{effect:?} left the picture unchanged (difference {d})"
+        );
+        shots.push((effect, img));
+    }
+
+    // And the four are not the same effect four times over.
+    for i in 0..shots.len() {
+        for j in i + 1..shots.len() {
+            let (a, img_a) = &shots[i];
+            let (b, img_b) = &shots[j];
+            let d = pixel_difference(img_a, img_b, quad);
+            assert!(
+                d > 200_000,
+                "{a:?} and {b:?} drew the same picture (difference {d})"
+            );
+        }
+    }
+    canvas.free(tex);
+
+    // A crop with a loud ring around it. A neighbour tap that steps outside the crop pulls
+    // the ring back into the picture, which is the one way an effect can invent detail a
+    // player cropped away.
+    let sentinel = [255u8, 0, 0, 255];
+    let grey = [128u8, 128, 128, 255];
+    let mut ringed = vec![0u8; 8 * 8 * 4];
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            let i = ((y * 8 + x) * 4) as usize;
+            let inside = (2..6).contains(&x) && (2..6).contains(&y);
+            ringed[i..i + 4].copy_from_slice(if inside { &grey } else { &sentinel });
+        }
+    }
+    let ring = canvas.upload_rgba8(8, 8, &ringed);
+    for effect in ShaderEffect::ALL {
+        canvas.clear(Color::BLACK);
+        canvas.image_effect_uv(
+            ring,
+            100.0,
+            80.0,
+            400.0,
+            300.0,
+            [0.25, 0.25, 0.75, 0.75],
+            Color::WHITE,
+            effect,
+        );
+        let img = canvas.read_back();
+        for py in 80..380u32 {
+            for px in 100..500u32 {
+                let p = img.pixel(px, py);
+                // Grey survives the stripes in every one of them; red only gets in by
+                // sampling outside the crop. The two are 57 apart at worst, so 100 leaves
+                // room for rounding on both sides.
+                let red = p[0] as i32 - p[1].max(p[2]) as i32;
+                assert!(
+                    red < 100,
+                    "{effect:?} pulled the cropped-away ring in at ({px}, {py}): {p:?}"
+                );
+            }
+        }
+    }
+    canvas.free(ring);
+}
+
+/// One scene drawn with or without an effect, read back whole. The rect at the foot is the
+/// after-the-effect draw every run has to agree on.
+fn draw_effect_scene(
+    canvas: &mut GlCanvas,
+    tex: TexId,
+    quad: (f32, f32, f32, f32),
+    effect: Option<ShaderEffect>,
+) -> Image {
+    let (x, y, w, h) = quad;
+    canvas.clear(Color::from_u8(0, 0, 0, 255));
+    match effect {
+        Some(e) => canvas.image_effect_uv(tex, x, y, w, h, [0.0, 0.0, 1.0, 1.0], Color::WHITE, e),
+        None => canvas.image_uv(tex, x, y, w, h, [0.0, 0.0, 1.0, 1.0], Color::WHITE),
+    }
+    canvas.rect(30.0, 400.0, 20.0, 20.0, Color::from_u8(0, 200, 255, 255));
+    canvas.read_back()
+}
+
+/// Total channel difference between two read-backs, over the quad the effect drew into.
+fn pixel_difference(a: &Image, b: &Image, quad: (f32, f32, f32, f32)) -> u64 {
+    let (x, y, w, h) = quad;
+    let mut sum = 0u64;
+    for py in y as u32..(y + h) as u32 {
+        for px in x as u32..(x + w) as u32 {
+            let (p, q) = (a.pixel(px, py), b.pixel(px, py));
+            for c in 0..4 {
+                sum += p[c].abs_diff(q[c]) as u64;
+            }
+        }
+    }
+    sum
 }
 
 /// A phase of the GL test above rather than a test of its own: winit allows one event loop

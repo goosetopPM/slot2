@@ -1,0 +1,18 @@
+<!--
+  The front trim around the cart slot on a Mega Drive shelf, drawn for SLOT2 in 2026 as a
+  geometric redraw: no manufacturer artwork, drawing or photograph was traced or copied, and
+  there is no logo or wordmark in the file. A wide chamfered block down each side with a top
+  rail broken over the middle of the trim is what tells it from the other six.
+
+  White coverage on transparency: `ShelfView` rasterises it, uploads it once and tints it with
+  the machine's lip colour. The opening the cartridge stands in is the empty middle: the rail
+  is in two pieces so that nothing crosses the mouth.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 304 58">
+  <g fill="#fff">
+    <rect x="0" y="4" width="132" height="3"/>
+    <rect x="172" y="4" width="132" height="3"/>
+    <path d="M 0 20 L 20 10 L 20 50 L 6 58 L 0 58 Z"/>
+    <path d="M 304 20 L 284 10 L 284 50 L 298 58 L 304 58 Z"/>
+  </g>
+</svg>

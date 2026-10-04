@@ -68,6 +68,14 @@ impl Drop for BusyGuard {
     }
 }
 
+/// The C string a cheat code becomes, refusing only what cannot be one.
+///
+/// The code is not trimmed, split, upper-cased or otherwise inspected: a multi-part `+` code,
+/// punctuation, spaces and UTF-8 all mean whatever the core's own parser says they mean.
+fn cheat_code_c(code: &str) -> Result<CString, Error> {
+    CString::new(code).map_err(|_| Error::Game("the cheat code contains a NUL byte".into()))
+}
+
 pub struct Core {
     api: ffi::Api,
     slot: Box<Slot>,
@@ -349,6 +357,38 @@ impl Core {
             let _a = ActiveSlot::bind(&mut self.slot);
             (self.api.reset)();
         }
+    }
+
+    /// Drop everything the core is holding as a cheat (`retro_cheat_reset`).
+    ///
+    /// Nothing is re-applied here: a caller that wants a set of cheats back calls this once
+    /// and then [`Core::set_cheat`] for each entry it wants, in its own order. Keeping the
+    /// "clear, then put the file back" lifecycle in the caller is what lets a toggle change
+    /// one index without the host guessing what the rest of the set was.
+    pub fn reset_cheats(&mut self) {
+        unsafe {
+            let _a = ActiveSlot::bind(&mut self.slot);
+            (self.api.cheat_reset)();
+        }
+    }
+
+    /// Hand one cheat to the core (`retro_cheat_set`).
+    ///
+    /// The code crosses over exactly as it came in — punctuation, `+`-joined parts, spaces,
+    /// UTF-8 — because what a code means is the core's business, not this host's. `enabled`
+    /// is passed through too, including `false`: a caller clearing an index is asking the
+    /// core, and this layer has no policy about which entries deserve to be sent.
+    ///
+    /// An interior NUL byte is the one thing refused, and it is refused before the core is
+    /// touched: it cannot be part of a C string at all, and quietly truncating the code there
+    /// would send a different cheat than the caller asked for.
+    pub fn set_cheat(&mut self, index: u32, enabled: bool, code: &str) -> Result<(), Error> {
+        let code = cheat_code_c(code)?;
+        unsafe {
+            let _a = ActiveSlot::bind(&mut self.slot);
+            (self.api.cheat_set)(index, enabled, code.as_ptr());
+        }
+        Ok(())
     }
 
     /// The options the core declared, with current values applied.
@@ -869,4 +909,31 @@ unsafe extern "C" fn input_state(port: c_uint, device: c_uint, _index: c_uint, i
         }
     })
     .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cheat_code_reaches_the_c_string_byte_for_byte() {
+        for code in [
+            "7E007C9A",
+            "12345678+9ABCDEF0",
+            "0101 0202 0303",
+            "[GameShark] 01",
+            "체력 회복",
+            "",
+        ] {
+            let c = cheat_code_c(code).unwrap_or_else(|e| panic!("{code:?} was refused: {e}"));
+            assert_eq!(c.as_bytes(), code.as_bytes(), "{code:?} was rewritten");
+        }
+    }
+
+    #[test]
+    fn a_nul_inside_a_cheat_code_is_an_error_not_a_truncation() {
+        let e = cheat_code_c("1234\u{0}5678").unwrap_err();
+        assert!(matches!(e, Error::Game(_)), "{e}");
+        assert!(e.to_string().contains("NUL"), "{e}");
+    }
 }

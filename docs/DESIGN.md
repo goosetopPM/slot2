@@ -56,9 +56,9 @@ SLOT2/
 │  ├─ slot2-text/             폰트 폴백 체인(fontdue), 글리프 캐시, 폭 측정
 │  ├─ slot2-input/            evdev(device) | gilrs+winit(host) → Event{Button, Axis}, 제스처(hold/double-tap/chord)
 │  ├─ slot2-audio/            ALSA dlopen(device) | cpal(host), 링버퍼, 리샘플, SFX
-│  ├─ slot2-retro/            libretro FFI 호스트(코어 무관), quirks/{mgba,gpsp,fceumm,snes9x,gpgx}, Registry
+│  ├─ slot2-retro/            libretro FFI 호스트(코어 무관), quirks/{mgba,gambatte,gpsp,fceumm,snes9x,gpgx}, Registry
 │  └─ slot2-store/            카드 레이아웃, 스캔, 세이브/스테이트, 설정 ini, 원자적 쓰기, 마이그레이션
-├─ cores/                     코어별 build.sh + 핀 커밋 + *.patch (mgba, gpsp, fceumm, snes9x, genesis_plus_gx)
+├─ cores/                     코어별 build.sh + 핀 커밋 + *.patch (mgba, gambatte, gpsp, fceumm, snes9x, genesis_plus_gx)
 ├─ assets/                    skins/*.svg, fonts/, sfx/, lang/{en,ko}.ftl, overlays/, shaders/
 ├─ build/cross.Dockerfile     debian:bullseye amd64 + rust + gcc-aarch64-linux-gnu + cmake
 ├─ taskfile.yml               build / test / core:* / dist:device / deploy:device / log:device
@@ -203,7 +203,11 @@ struct PlatformDef {
 }
 ```
 
-**코어 빌드** (`cores/<name>/build.sh`): 핀 커밋 + 패치, `.meta` 스탬프로 재빌드 판정, 산출물 `vendor/<name>_libretro.so`. 원본 mGBA·gpSP 패치는 그대로 가져온다.
+**코어 빌드** (`cores/<name>/build.sh`): 핀 커밋 + 패치, `.meta` 스탬프로 재빌드 판정, 산출물 `vendor/<name>_libretro.so`. 스탬프에는 repo·핀·target·make 디렉터리와 makefile·추가 make 인자·triple·패치 해시가 모두 들어가므로, 인자를 바꾸면 같은 핀이라도 다시 빌드된다. 배포하는 여섯 코어(mGBA·Gambatte·gpSP·FCEUmm·snes9x·GPGX)가 모두 이 경로로 빌드되고, Windows `.dll`은 개발 테스트용으로 libretro buildbot에서 받는다.
+
+**배포 코어 목록은 `cores/required.txt` 한 곳이다.** 여섯 이름을 순서대로 적은 이 manifest가 `build/cores.ps1`의 기본 목록이자 `build/dist-device.ps1`이 카드와 zip에 넣는 목록이고 CI의 host·device 빌드가 순서대로 읽는 목록이다 — PowerShell에도 workflow에도 이름 배열을 따로 두지 않는다. runtime의 단일 목록은 계속 `Core::ALL`(`slot2-retro`)이고, `build/core-manifest.ps1`의 검증(빈 값·중복·안전하지 않은 이름·누락된 build.sh/commit 거부)과 `slot2-retro`의 filesystem contract 테스트가 manifest와 `Core::ALL`을 맞물린다. **여섯 `.so`와 여섯 `.so.meta`가 vendor에 없으면 배포는 실패한다**: 하나라도 없거나 비어 있으면 기존 `dist-device`를 지우기 전에 이름과 경로를 찍고 멈추고, 조립 뒤에도 `System/cores`·`System/licenses`가 manifest의 정확한 여섯인지 다시 확인한 다음에만 zip·ADB로 간다. core가 하나 없는 카드는 선반 하나가 비어 있는 채로 부팅해 버그처럼 보이므로 경고로 넘기지 않는다.
+
+**라이선스와 대응 소스도 같은 gate를 탄다.** `build/package-core-sources.ps1`이 각 core의 pinned checkout에서 `git archive`로 **pristine 소스**(commit 그대로, build output·`.git`·적용된 패치 없음)를 뜨고, `cores/common.sh`·`commit`·`build.sh`·`*.patch`를 **recipe**로 함께 복사하며, core별 top-level 라이선스를 `git cat-file`로 꺼내 `licenses/cores/<name>/`의 추적 복사본과 byte 비교한다. 산출물은 `SOURCE-MANIFEST.txt`(repo·pin·archive SHA-256·patch SHA-256, 상대경로만)와 함께 카드의 `System/licenses/sources/`에 들어가고, 배포 스크립트는 기존 `dist-device`를 지우기 전에 bundle을 만들고 검증한 뒤에야 조립을 시작한다. archive가 해당 pin의 라이선스를 같은 byte로 포함하지 않거나, recipe가 repository와 다르거나, manifest hash가 파일과 맞지 않으면 zip·ADB 이전에 실패한다. 즉 binay에 대응하는 소스는 **archive + recipe**이고, `System/licenses/<name>_libretro.so.meta`가 어느 pin·인자로 빌드됐는지를 봉인한다.
 
 **코어가 신고한 값은 그대로 받는다.** 코어의 `sample_rate`·`fps`는 호스트가 "상식적인 범위"로 다듬을 대상이 아니다. mGBA는 GBA 오디오를 **65536 Hz**(`GBA_OUTPUT_RATE`, GBA 사운드 FIFO의 32768 Hz의 두 배)로 내보내고 그렇게 신고한다. 한때 호스트에 "50 kHz 넘으면 32768로 간주" 클램프가 있었고, 그 탓에 모든 GBA 게임이 한 옥타브 낮게·두 배 느리게 재생됐다. 게다가 초과분이 오디오 링을 넘쳐 잘려 나가면서 템포만 얼추 맞아 보여, **명백한 고장이 막연한 잡음처럼 위장**됐다. 검증은 범위가 아니라 **자기일관성**으로 한다 — 신고한 레이트와 실제로 넘겨준 샘플 수가 일치하는지(`the_declared_sample_rate_is_what_the_core_actually_produces`).
 
@@ -213,7 +217,7 @@ struct PlatformDef {
 
 ## 7. UI (`slot2-ui`)
 
-**화면 상태기계**: `Shelf` → `Inserting` → `Playing` ↔ `InGameMenu`(→ `StateSwitcher`) → `Ejecting` → `Shelf`. 선반 부속: `ShelfMenu`(언어·플랫폼 기본 화면 설정·부팅 로고·연동 모드·시계·About), `CorePicker`(코어 2개 이상인 플랫폼만), `PowerMenu`, `SyncScreen`, `Toast`, `Refusal`.
+**화면 상태기계**: `Shelf` → `Inserting` → `Playing` ↔ `InGameMenu`(→ `StateSwitcher` / `CheatMenu` / `DisplayMenu` / `CorePicker`) → `Ejecting` → `Shelf`. `CorePicker`는 후보가 2개 이상인 플랫폼에서 설치 core를 보여주고 선택 시 checkpoint 뒤 Session을 다시 시작한다. 선반 부속: `ShelfMenu`(언어·플랫폼 기본 화면 설정·부팅 로고·연동 모드·시계·About), `PowerMenu`, `SyncScreen`, `Toast`, `Refusal`.
 
 **인게임 메뉴 (D-23)**: MENU 탭 → 코어 정지·오디오 뮤트 → 마지막 프레임을 어둡게 깔고 패널. 항목: 계속하기 / 세이브 스테이트 / 치트 / 화면(스케일·셰이더·오버레이, 변경 즉시 뒤 화면에 반영) / 코어 / 기기 / 꺼내기. 닫으면 그 자리에서 재개.
 
@@ -236,10 +240,12 @@ struct PlatformDef {
 struct PlatformSkin {
     cart: Svg, cart_size: (u32,u32), label_rect: Rect, shell_palette: &[Shell],
     port: Svg, mouth_rect: Rect, seat_depth: f32,
-    insert: Curve, eject: Curve, sfx_in: Sfx, sfx_out: Sfx,
+    insert: Curve, eject: Curve, sfx_in: SoundProfile, sfx_out: SoundProfile,
 }
 ```
-GBA·GB·GBC는 원본 SVG 이식. NES/SNES/MD/SMS는 제작 전까지 GBA 스킨 폴백.
+GBA·GB·GBC는 원본 SVG 이식, NES·SNES·MD·SMS는 SLOT2 자체 카트 SVG(2026, 원본 tracing 없이 기하학적 재해석). 7개 플랫폼 모두 독립 cart shell/detail과 독립 port trim을 가지며 폴백은 없다. port trim은 front 단계에서 band 위에 합성되고 중앙 opening이 비어 있어 slot에 꽂힌 카트리지가 계속 보인다. `PlatformSkin`의 `insert`/`eject`는 플랫폼별 **normalized travel profile**(contact·release·creep, 애니메이션 전체에 대한 비율)이고, 애니메이션 길이·seated hold·코어 로드 시점은 `insert`/App 계약에 남는 공용 clock이다.
+
+`sfx_in`/`sfx_out`은 같은 두 녹음(`assets/sfx/*.pcm`, MIT 원본 그대로)을 플랫폼별 재생 프로필 `SoundProfile{speed, gain}`로 읽는 것이다. 속도·음량만 담은 copy 가능한 의미 타입이고 `slot2-ui`는 audio에 의존하지 않는다. 방향은 계속 `Sfx::{Insert,Eject}`가 정하고, 프로필은 그 녹음을 어떻게 재생할지만 정한다. App은 `platform()`의 skin을 한 번 조회해 삽입/배출에 맞는 프로필을 고르고 clip을 이벤트당 한 번만 render해 ring에 전부 쓴 뒤 sink를 연다. 표·생성자 bounds는 코드가 단일 source of truth다. 접점 cue는 원본 lead가 아니라 **변형 속도의 lead**(`Sfx::lead_at_speed`)로 `SEATED_AT`에서 역산하므로 어떤 프로필에서도 접점 소리와 화면 접촉 시점이 `SEATED_AT`에 함께 온다. base `Sfx::render`는 녹음 그대로이고 과거 호출자 계약은 그대로 유지된다.
 
 **faces**: 텍스트·복합 요소는 CPU 래스터 → 텍스처, 내용 변경 시에만 재생성. GL은 쿼드 합성만(원본 방식).
 
@@ -259,7 +265,7 @@ FluentBundle  ── 함수: JOSA(text, "을/를"), BTN("menu"), PLURAL(기본 �
 Vec<Span>  = [Text(..) | Btn(Button) | Icon(Glyph)]
         │
         ▼
-slot2-text: 폰트 폴백 체인 [UI 라틴(언어팩 font= 로 교체 가능) → 한글·CJK(Noto Sans KR 서브셋, 지연 로딩) → 아이콘] · 폭 측정 · 글리프 캐시
+slot2-text: 폰트 폴백 체인 [언어팩 lang-font= 선호(지연 로딩) → UI 라틴 → 한글·CJK(Noto Sans KR 서브셋, 지연 로딩) → 아이콘] · 폭 측정 · 글리프 캐시
         │
         ▼
 face 래스터 → 텍스처
@@ -267,9 +273,9 @@ face 래스터 → 텍스처
 
 - **JOSA 규칙**: 마지막 글자가 한글 음절이면 `(cp-0xAC00)%28`로 받침 판정, `으로/로`는 ㄹ받침(8) 예외. 숫자는 읽는 소리로 판정. 그 외(영문·기호)는 병기형 `을(를)`.
 - **어순**: 코드에서 문자열 결합 금지. 모든 문장은 완성 템플릿 + 이름 붙은 자리표시자.
-- **언어 선택**: 설정 항목. 기본 `en`. 언어팩은 `font = "..."`로 자기 폰트 지정(내장 또는 `System/Fonts/`).
+- **언어 선택**: 설정 항목. 기본 `en`. 언어팩은 `lang-font = "..."`로 UI 본문의 선호 폰트 파일명 하나를 지정한다(`System/Fonts/` 우선, 없으면 기본 체인).
 - **한글·CJK 폰트**: Noto Sans KR(OFL) 서브셋 1개를 항상 내장 — 게임 제목의 일본어·한자를 언어 설정과 무관하게 렌더해야 하기 때문. `pyftsubset`으로 라틴+한글 음절+가나+KS X 1001 한자+기호로 제한(≈17k 글리프, 5~6MB). fontdue는 로드 시 전 글리프를 파싱하므로 부팅 경로에서 빼고 지연 로딩(첫 미스 또는 백그라운드). 대체 라벨 인쇄(`Labels/`에 이미지 없을 때)도 같은 체인.
-- **정렬**: 코드포인트 정렬(한글 음절은 자모순 배열이라 가나다순 성립).
+- **정렬**: Unicode scalar value 순서(Rust `str`의 UTF-8 바이트 비교가 이 순서를 보존한다). ASCII 대문자 → 소문자 → 가나·한자 → 한글 음절 순으로 드러나며(로케일 collation·자연수 정렬·대소문자 folding 없음), 같은 stem의 복수 허용 확장자는 확장자 순으로 결정적이다. NFC/NFD 정규화를 하지 않으므로 파일시스템이 다르게 준 두 이름은 다른 카트다.
 
 ---
 
@@ -279,13 +285,21 @@ face 래스터 → 텍스처
 <card root>/
 ├─ System/
 │  ├─ frontend             SLOT2 바이너리 (BaseOS 계약)
-│  ├─ cores/*.so           mgba, gpsp, fceumm, snes9x, genesis_plus_gx
-│  ├─ licenses/            코어 라이선스·소스 아카이브·패치
+│  ├─ cores/*.so           cores/required.txt의 여섯: mgba, gambatte, gpsp, fceumm, snes9x, genesis_plus_gx
+│  ├─ licenses/            고지·코어 라이선스·대응 소스(§6 코어 빌드)
+│  │  ├─ SLOT2-LICENSE          SLOT2 자체 MIT(root LICENSE)
+│  │  ├─ CORE-NOTICES.md        코어/원작/폰트/스킨·효과음 고지와 대응 소스 설명
+│  │  ├─ upstream-slot/LICENSE  원작 brandonkowalski/slot의 MIT 원문
+│  │  ├─ fonts/                 Open Sans·Noto Sans KR OFL
+│  │  ├─ cores/<name>/<license> pinned commit의 top-level 라이선스 원문
+│  │  ├─ sources/          SOURCE-MANIFEST.txt + archives/<name>-<pin>.zip(git archive) + licenses/ + recipes/
+│  │  ├─ rust/             Rust 런타임 third-party 고지: THIRD-PARTY-RUST.md + RUST-SBOM.json + RUST-MANIFEST.txt + packages/<key>/(PACKAGE.txt + crate 원문 라이선스)
+│  │  └─ <name>_libretro.so.meta
 │  ├─ Lang/*.ftl           선택: 언어팩 덮어쓰기
 │  ├─ Fonts/               선택
 │  ├─ Overlays/            선택
 │  ├─ slot2.ini            전역 설정
-│  ├─ games/<PLAT>/<stem>.ini   게임별 설정(코어 선택·스케일·오버스캔, 후일 셰이더)
+│  ├─ games/<PLAT>/<stem>.ini   게임별 설정(코어 선택·스케일·오버스캔·셰이더)
 │  ├─ cheats/<PLAT>/<stem>.cht  치트(RetroArch .cht 포맷, 데스크탑이 씀, D-21)
 │  ├─ manifest.json        연동 프로토콜: SLOT2가 씀 (§12.3)
 │  ├─ sync.lock            연동 프로토콜: 데스크탑이 전송 중 생성
@@ -295,13 +309,21 @@ face 래스터 → 텍스처
 ├─ Games/{GB,GBC,GBA,NES,SNES,MD,SMS}/
 ├─ Labels/{...}/<stem>.png
 ├─ Saves/{...}/<stem>.sav
-├─ States/{...}/<stem>/{resume.state, N.state, N.png}
+├─ States/{...}/<stem>/<core>/{resume.state, N.state, N.png}
 └─ Wallpapers/*.png
 ```
 
 원본 slot 카드(`Games/`, `Labels/`, `Saves/`, `States/`)와 **호환**을 유지한다 — 기존 slot 사용자가 `System/`만 바꾸면 그대로 쓸 수 있게. 확장자 매핑: GB `.gb`, GBC `.gbc`, GBA `.gba`, NES `.nes`, SNES `.sfc .smc`, MD `.md .gen .bin`, SMS `.sms`. 폴더+확장자로만 플랫폼 판정(헤더 스니핑 없음). 쓰기는 전부 원자적(temp + rename).
 
+게임 하나의 키는 **스캔한 파일명에서 마지막 허용 확장자 하나만 뗀 stem**이다. 확장자 판정만 대소문자를 무시하고, 공백·여러 점·괄호·대괄호·`'`/`+`/`&`/`!`/`#`/`%`/`@`/`_`/`-`와 한글·가나·한자는 그대로 보존한다(정규화·sanitize·rename 없음). 그 stem이 위 `Labels/`·`Saves/`·`States/`·`games/<PLAT>/<stem>.ini`·`cheats/<PLAT>/<stem>.cht`에 그대로 쓰이고, 플랫폼이 다르면 폴더로 갈라진다. 같은 플랫폼에서 같은 stem의 허용 확장자가 둘(SNES `.sfc`/`.smc`)이면 **카트 두 개로 표시되고 위 경로를 공유한다** — 레이아웃이 stem당 세이브 하나만 두기 때문이다.
+
+**스테이트는 코어별로 한 단계 더 내려간다.** libretro 스테이트는 코어가 자기 메모리를 직렬화한 것이라 다른 코어는 읽을 수 없고, 한 게임에 코어 둘(mGBA·gpSP)이 붙는 순간 같은 번호가 서로 다른 바이트를 뜻하게 되기 때문이다. `<core>`는 공식 코어면 `CoreId::base_name()`(예: `mgba_libretro`), 이 프론트엔드가 모르는 라이브러리면 stem에서 결정적으로 만든 이름이다(그대로 쓸 수 없는 문자는 `external_<hex>_<hex>`로 접는다). 어느 코어를 열지와 그 코어의 namespace는 `session::resolve_core` 한 곳이 정하고, 실행과 선반의 Resume 조회가 같은 함수를 쓴다 — 게임별 ini의 코어 값은 코어 디렉터리 안의 **파일 이름**으로만 취급해 `/`, `\`, `..` 같은 값이 카드 밖 라이브러리를 열지 못하게 한다.
+
+코어를 고를 수 없던 시절의 **평면 스테이트**(`<stem>/{resume.state,N.state}`)는 스캔 때 플랫폼 **기본** 코어의 namespace로 한 번 옮긴다 — 그 시절의 파일은 정의상 기본 코어의 것이고, 지금 선택된 대체 코어의 것이 아니다. 목적지에 이미 파일이 있으면 옮기지 않고 평면 원본을 그대로 둔다: 어느 쪽이 최신인지 프론트엔드가 알 방법이 없고, 둘을 합치는 것보다 둘 다 남기는 쪽이 안전하다. 세이브 RAM은 이 태스크의 대상이 아니며 여전히 코어 간 공유다.
+
 ---
+
+시각 계약(D-25): 시스템 시각과 저장 시각은 UTC로 유지하며, 시간대 오프셋은 표시 직전에만 적용한다. mtime을 로컬 시각으로 보정해 되쓰지 않는다. 향후 시각을 파일명에 넣는 기능은 UTC와 `Z` 표기를 사용한다. 표시 offset의 영속 값은 `System/slot2.ini`의 `utc_offset_minutes`(기본 0) 하나이며, 시작 시 한 번 적용되고 설정 메뉴에서 방향 입력으로 즉시 preview·A 적용·B 취소되고 저장 실패 시 이전 값으로 되돌아간다.
 
 ## 10. 입력 (`slot2-input`)
 
@@ -319,7 +341,20 @@ face 래스터 → 텍스처
 - `build/cross.Dockerfile`: `debian:bullseye` amd64, rustup + `aarch64-unknown-linux-gnu` 타깃, `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake make git file`. 링커 env `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`. glibc 2.31 하한(BaseOS 2.35 추정보다 낮아 전방 호환).
 - `task build:device` → `target-device/device/frontend`. `task dist:device` → `dist-device/`(위 카드 레이아웃 `System/` 완성본 + 라이선스·소스). `task deploy:device` → adb push + reboot.
 - 호스트: `cargo run -p slot2`(창 720×480, `SLOT2_ROOT=./sdcard`). Windows 네이티브가 막히면 WSL2+WSLg.
-- CI: `ci.yml`(fmt, clippy host+device, test), `release.yml`(태그 → dist zip + 라이선스 동봉).
+- CI: `ci.yml`(fmt, clippy host+device, test). 카드 트리 조립은 `device-artifact.yml` 하나만 한다 —
+  `workflow_call` 전용, `contents: read`, artifact 이름은 호출자가 준다. `ci.yml`의 `device` job
+  (`needs: check`)과 태그 릴리스가 이 파일을 같이 호출하므로 릴리스가 싣는 트리는 CI가 조립한 트리와 같다.
+- 릴리스: `release.yml`은 `v*` 태그 push에서만 돈다(`contents: read`, 태그별 concurrency·취소 없음).
+  `build` job이 `device-artifact.yml`을 릴리스용 artifact 이름으로 호출하고, `publish` job
+  (`contents: write` 하나뿐)이 그 artifact를 이름으로 내려받아 태그 커밋(`git rev-parse HEAD`)을
+  checkout(`ref`=태그, `fetch-depth: 0`)한 뒤 `build/package-release.ps1 -CardRoot <트리> -Tag v<버전>
+  -Commit <40hex> -OutputDir <dir>`로 `slot2-<태그>.zip`과 `.zip.sha256` 하나만 만든다. 스크립트는
+  태그=작업공간 버전, 커밋 40hex, `System/VERSION.txt`의 버전·짧은 커밋, 여섯 core·라이선스·소스 번들·
+  Rust 고지·폰트·frontend를 검사하고, zip을 다시 열어 엔트리 이름·루트(`System` 하나)·길이·해시를 트리와
+  대조하며, 기존 출력 파일은 덮어쓰지 않고 실패하면 이전 출력을 그대로 둔다. 게시 단계는 러너의 `gh`로
+  **draft** 릴리스(`--draft --verify-tag --generate-notes`, 기존 릴리스가 있으면 실패)를 만드는 것뿐이고
+  공개는 사용자가 한다. **호스팅 CI 미실행** — cache miss/hit artifact parity, 태그 실행, draft 검사,
+  수동 공개는 미검증이다.
 
 ---
 
@@ -376,7 +411,7 @@ face 래스터 → 텍스처
 | V-5 | 호스트 빌드가 Windows 네이티브에서 도는지 | `cargo run -p slot2` | M0 | ✅ |
 | V-6 | fbdev EGL 초기화·60Hz 스왑이 RG SP(720×480)에서 정상 | M0 스플래시 | M0 | ✅ `/dev/mali0` + `libEGL.so.1`/`libGLESv2.so.2` 존재, dlopen 성공. fb0 `virtual_size=720,960`(더블버퍼) / `modes=U:720x480p-59` → 패널은 720×480 |
 | V-7 | ALSA 장치명(RG SP) | `adb shell "cat /proc/asound/cards"` | M1 | ✅ card0 `audiocodec`(`pcmC0D0p`), card2 `ahubhdmi`. 실기 게임 구동에서 소리 확인 |
-| V-8 | 5개 코어의 H700 실속도 | 코어별 벤치(`core_bench` 이식) | M2 | ⬜ |
+| V-8 | 6개 코어의 H700 실속도 | 코어별 벤치(`core_bench` 이식) | M2 | ⬜ |
 | V-9 | 640×480·720×720 기기 실기 확인 (보유 시) | 커뮤니티 테스트 | M6 | ⬜ |
 | V-10 | Noto Sans KR 서브셋의 RG SP 로딩 시간·메모리 | 부팅 로그에 `font: loaded N glyphs in X ms` | M0 | ⚠️ A53에서 전체 폰트 파싱 52초 → 지연 로딩으로 부팅은 막지 않으나 서브셋이 M5보다 앞당겨질 수 있음 |
 | V-11 | BaseOS 루트FS에 `wpa_supplicant`, `udhcpc`, `rfkill` 존재 여부와 경로 | `adb shell "which wpa_supplicant udhcpc rfkill; ls /data"` | M0 | ✅ `/usr/sbin`에 `wpa_supplicant`·`wpa_cli`·`udhcpc`·`rfkill`·`dropbear`·`avahi-daemon` 모두 존재. `iw`는 없음 |

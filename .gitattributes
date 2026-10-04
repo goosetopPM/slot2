@@ -17,3 +17,8 @@
 *.smc binary
 *.md.bin binary
 *.sms binary
+
+# These two are byte-preserved upstream licence texts: their trailing spaces are part of the
+# upstream releases, so Git must not report them as whitespace errors when they are staged.
+licenses/cores/genesis_plus_gx/LICENSE.txt -whitespace
+licenses/cores/mgba/LICENSE -whitespace

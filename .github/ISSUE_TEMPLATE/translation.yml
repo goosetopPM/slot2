@@ -1,0 +1,105 @@
+name: Translation / 번역
+description: "A new language, a card-only pack, a correction, or a translation problem. / 새 언어·카드 팩·번역 수정·번역 문제를 위한 양식입니다."
+title: "[Translation] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read the guide for the language you are writing in first: [docs/TRANSLATING.md](../blob/main/docs/TRANSLATING.md)
+        (English) or [docs/TRANSLATING.ko.md](../blob/main/docs/TRANSLATING.ko.md) (한국어). Both describe the pack
+        files, the `BTN`/`JOSA` rules and the exact commands that check a pack. / 먼저 사용하는 언어의
+        안내를 읽어 주십시오: [docs/TRANSLATING.md](../blob/main/docs/TRANSLATING.md)(영어) 또는
+        [docs/TRANSLATING.ko.md](../blob/main/docs/TRANSLATING.ko.md)(한국어). 팩 파일, `BTN`/`JOSA` 규칙과 팩을 검사하는
+        정확한 명령이 적혀 있습니다.
+
+        Use this form to coordinate a new built-in language or to raise something that needs
+        discussion. A card-only pack needs no issue and no code change. / 새 내장 언어를 함께 준비하거나 논의가
+        필요한 사항을 알릴 때 이 양식을 씁니다. 카드 전용 팩은 이슈도 코드 변경도 필요하지 않습니다.
+
+        **Never attach** ROMs, BIOS files, screenshots of game content you may not share, secrets, or
+        generated build output. / **첨부하지 마십시오**: ROM, BIOS 파일, 공유 권한이 없는 게임 화면,
+        비밀, 생성된 빌드 출력.
+  - type: dropdown
+    id: contribution-type
+    attributes:
+      label: "What are you contributing? / 무엇을 하려는지"
+      description: "Pick the closest one. / 가장 가까운 항목을 골라 주십시오."
+      options:
+        - "New built-in language (en/ko are the built-ins today) / 새 내장 언어 (현재 내장은 en, ko)"
+        - "Correction to an existing built-in language / 기존 내장 언어 수정"
+        - "Card-only pack (`System/Lang/<code>.ftl`) / 카드 전용 팩"
+        - "Translation question or problem / 번역 질문 또는 문제"
+    validations:
+      required: true
+  - type: input
+    id: language-code
+    attributes:
+      label: "Language code / 언어 코드"
+      description: "BCP-47-style, as the `.ftl` file will be named: `ja`, `pt-BR`. Write `not applicable` for a general question. / `.ftl` 파일 이름이 될 BCP-47 형식입니다(`ja`, `pt-BR`). 일반적인 질문이면 `not applicable`이라고 적어 주십시오."
+      placeholder: "ja"
+    validations:
+      required: true
+  - type: input
+    id: language-name
+    attributes:
+      label: "Native language name / 그 언어가 스스로를 부르는 이름"
+      description: "What the language picker should show, written by a speaker of that language: `日本語`, `Português`. Write `not applicable` if this is a question. / 언어 선택 화면에 표시할 이름을 그 언어로 적어 주십시오(`日本語`, `Português`). 질문이라면 `not applicable`이라고 적어 주십시오."
+      placeholder: "日本語"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: "Keys or scope / 영향받는 key 또는 범위"
+      description: "For a correction, list the affected message keys (for example `shelf-empty`, `state-saved`). For a new language, say whether you plan the whole pack or a part of it. / 수정이라면 해당 key를 적어 주십시오(예: `shelf-empty`, `state-saved`). 새 언어라면 전체 팩인지 일부인지 알려 주십시오."
+      placeholder: "shelf-empty, state-saved"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Proposed wording or the problem / 제안 문구 또는 문제 설명"
+      description: "Paste the proposed wording with the key it belongs to, and the context a translator cannot see from the file, or describe precisely what is wrong with the current text. Keep Fluent ids, `$variables` and `BTN(\"...\")` exactly as the canonical English pack has them. / 제안 문구와 그 key, 그리고 파일만 봐서는 알 수 없는 문맥을 적어 주십시오. 또는 현재 문구의 무엇이 잘못되었는지 구체적으로 설명해 주십시오. Fluent id, `$변수`, `BTN(\"...\")`는 기준 영어 팩과 똑같이 유지해야 합니다."
+    validations:
+      required: true
+  - type: input
+    id: font
+    attributes:
+      label: "Font name and license / 폰트 이름과 라이선스"
+      description: "Only if the contribution needs its own UI font: the file name a pack's `lang-font` would name plus the license it ships under. Write `none` when no new font is needed. / 자체 UI 폰트가 필요할 때만 적어 주십시오. 팩의 `lang-font`에 쓸 파일 이름과 그 라이선스입니다. 필요 없으면 `none`이라고 적어 주십시오."
+      placeholder: "none"
+    validations:
+      required: true
+  - type: dropdown
+    id: provenance
+    attributes:
+      label: "How the text was produced / 문구를 만든 방법"
+      description: "Disclosure is welcome in every case. Say how the text was made; it changes neither your rights nor anyone else's. Machine or AI assistance is allowed. / 어떤 경우든 밝혀 주시면 됩니다. 이 공개는 어떤 권리도 바꾸지 않습니다. 기계·AI 도움을 쓰는 것은 허용됩니다."
+      options:
+        - "Written by me, no machine assistance / 직접 작성, 기계 도움 없음"
+        - "Machine or AI assisted, reviewed by a human / 기계·AI 도움, 사람이 검토함"
+        - "Machine or AI assisted, not yet reviewed / 기계·AI 도움, 아직 검토하지 않음"
+        - "Mixed sources / 여러 방법을 섞음"
+        - "Not applicable — this is a question / 해당 없음 (질문)"
+    validations:
+      required: true
+  - type: textarea
+    id: review
+    attributes:
+      label: "Human review and rights / 사람 검토와 권리"
+      description: "Say who reviewed the text and where it came from. Confirm that you have the right to contribute the text and any asset you propose, and that you are not asking the maintainers to decide a copyright question for you. / 누가 검토했고 어디서 온 문구인지 적어 주십시오. 제안하는 문구와 자산을 기여할 권리가 본인에게 있으며, 저작권 판단을 관리자에게 대신 요구하는 것이 아님을 확인해 주십시오."
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Before submitting / 제출 전 확인"
+      options:
+        - label: "I read the language guide ([English](../blob/main/docs/TRANSLATING.md) or [한국어](../blob/main/docs/TRANSLATING.ko.md)) and followed the pack rules. / 언어 안내([영어](../blob/main/docs/TRANSLATING.md) 또는 [한국어](../blob/main/docs/TRANSLATING.ko.md))를 읽고 팩 규칙을 따랐습니다."
+          required: true
+        - label: "Fluent keys, `$variables` and `BTN` ids are kept exactly as in the canonical English pack, and technical identifiers are not translated. / Fluent key, `$변수`, `BTN` id를 기준 영어 팩과 똑같이 유지했고 기술 식별자를 번역하지 않았습니다."
+          required: true
+        - label: "I have the right to contribute this text and any asset I propose, and I am not asking for a legal conclusion on my behalf. / 이 문구와 제안하는 자산을 기여할 권리가 있으며, 법적 결론을 대신 요구하지 않습니다."
+          required: true
+        - label: "I am not attaching ROMs, BIOS files, copyrighted game content, secrets, or generated build output. / ROM·BIOS 파일·저작권이 있는 게임 내용·비밀·생성된 빌드 출력을 첨부하지 않았습니다."
+          required: true

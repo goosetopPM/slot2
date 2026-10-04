@@ -31,6 +31,6 @@ slot2-input = { workspace = true }
 slot2-audio = { workspace = true }
 slot2-retro = { workspace = true }
 slot2-store = { workspace = true }
-
-[dev-dependencies]
+# The overlay layer decodes a PNG at run time, so this is the binary's own dependency rather
+# than a test-only one.
 png = "0.17"

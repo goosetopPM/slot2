@@ -1,0 +1,219 @@
+name: Device compatibility report / 기기 호환성 보고
+description: "Results from one physical handheld: what you tested, what passed, what did not. / 실기 한 대에서 확인한 결과를 남깁니다."
+title: "[Device] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form records **physical-hardware** evidence: your own device, your own hands.
+        Reports do not change SLOT2's compatibility table by themselves and do not close any
+        acceptance item — they are the evidence those decisions are made from later. / 이 양식은 **실기**
+        증거를 남깁니다. 보고만으로 SLOT2의 호환성 표가 바뀌거나 검증 항목이 닫히지는 않으며, 이후 판단의
+        근거 자료가 됩니다.
+
+        Test only what your device actually has. If your unit has no lid, no sticks or no HDMI, answer
+        "Not applicable" — nothing here expects a feature the device does not have. Unanswered rows mean
+        "not tested" and are never counted as a pass. / 기기에 실제로 있는 기능만 시험해 주십시오. 덮개·
+        스틱·HDMI가 없는 기기라면 "해당 없음"을 고르면 됩니다. 답하지 않은 행은 "미확인"이며 통과로 세지
+        않습니다.
+
+        **Never paste or attach** ROMs, BIOS files, copyrighted game assets, save files holding personal
+        data, API keys, credentials, complete unredacted logs or card images. Remove usernames, local
+        paths, network details, serials and secrets before you paste anything. / **붙여 넣지 마십시오**:
+        ROM, BIOS 파일, 저작권이 있는 게임 자산, 개인 정보가 담긴 세이브, API 키·자격 증명, 검토하지 않은
+        전체 로그, 카드 이미지. 붙여 넣기 전에 사용자 이름·로컬 경로·네트워크 정보·시리얼·비밀을 지워
+        주십시오.
+  - type: input
+    id: device
+    attributes:
+      label: "Device / 기기"
+      description: "The exact device name, as printed on the case or shown in About. / 기기 겉면이나 About 화면의 정확한 이름입니다."
+      placeholder: "RG SP"
+    validations:
+      required: true
+  - type: input
+    id: baseos-target
+    attributes:
+      label: "BASEOS_TARGET / 기기 식별자"
+      description: "The value in `/etc/baseos-release` or the boot log. Write `unknown` if you cannot read it. / `/etc/baseos-release` 또는 부팅 로그의 값입니다. 읽을 수 없으면 `unknown`이라고 적어 주십시오."
+      placeholder: "rgsp"
+    validations:
+      required: true
+  - type: input
+    id: baseos-version
+    attributes:
+      label: "BaseOS version / BaseOS 버전"
+      description: "Only if you know it. Write `unknown` otherwise. / 아는 경우에만 적고, 모르면 `unknown`이라고 적어 주십시오."
+      placeholder: "unknown"
+    validations:
+      required: false
+  - type: input
+    id: build
+    attributes:
+      label: "SLOT2 build and commit / SLOT2 빌드와 커밋"
+      description: "From the About sticker or the first line of `System/VERSION.txt`. Write `unknown` if you cannot read it. / About 화면이나 `System/VERSION.txt` 첫 줄에서 확인합니다. 확인할 수 없으면 `unknown`이라고 적어 주십시오."
+      placeholder: "SLOT2 0.1.0 (abc1234) — or unknown"
+    validations:
+      required: true
+  - type: dropdown
+    id: panel
+    attributes:
+      label: "Panel geometry / 패널 해상도"
+      description: "What the device reports, or what the boot log says. / 기기가 알려 주는 값 또는 부팅 로그의 값입니다."
+      options:
+        - "640x480"
+        - "720x480"
+        - "720x720"
+        - "Not sure / 모름"
+    validations:
+      required: true
+  - type: dropdown
+    id: card-setup
+    attributes:
+      label: "Card setup / 카드 구성"
+      description: "How SLOT2 is installed on your cards. / 카드에 SLOT2를 어떻게 설치했는지 알려 주십시오."
+      options:
+        - "One card — BaseOS and SLOT2 both on TF1 / 카드 한 장 (TF1에 BaseOS와 SLOT2)"
+        - "Two cards — BaseOS on TF1, SLOT2 and ROMs on TF2 / 카드 두 장 (TF1 BaseOS, TF2 SLOT2)"
+        - "Not sure / 모름"
+    validations:
+      required: true
+  - type: dropdown
+    id: result-boot
+    attributes:
+      label: "Boot and shelf / 부팅과 선반"
+      description: "Power-on to a shelf with carts on it. / 전원을 켜서 카트리지 선반이 나오기까지."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+    validations:
+      required: false
+  - type: dropdown
+    id: result-controls
+    attributes:
+      label: "Controls / 조작"
+      description: "D-pad, face buttons, shoulder buttons, MENU, the gestures you tried. / D-pad, 기본 버튼, 어깨 버튼, MENU와 시도한 제스처."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+    validations:
+      required: false
+  - type: dropdown
+    id: result-audio
+    attributes:
+      label: "Audio / 소리"
+      description: "Sound from the speaker or headphones, and volume changes. / 스피커·이어폰 소리와 볼륨 변화."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+    validations:
+      required: false
+  - type: dropdown
+    id: result-display
+    attributes:
+      label: "Display scaling and overlay / 화면 배율과 오버레이"
+      description: "The display scale rows, shader presets, overscan and overlay from the in-game menus. / 게임 중 메뉴의 배율 행, 셰이더 프리셋, 오버스캔, 오버레이."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+    validations:
+      required: false
+  - type: dropdown
+    id: result-volume
+    attributes:
+      label: "Volume / 볼륨"
+      description: "The device's own volume keys, on the shelf and in a game. / 선반과 게임 중에서 기기 볼륨 키."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+    validations:
+      required: false
+  - type: dropdown
+    id: result-lid
+    attributes:
+      label: "Suspend and lid / 절전과 덮개"
+      description: "SP-style clamshells only. Choose \"Not applicable\" if your unit has no lid. / SP 계열 폴더형 기기만 해당합니다. 덮개가 없으면 \"해당 없음\"을 고르십시오."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+        - "Not applicable — no lid / 해당 없음 (덮개 없음)"
+    validations:
+      required: false
+  - type: dropdown
+    id: result-sticks
+    attributes:
+      label: "Sticks / 스틱"
+      description: "H, V and Cube devices only. Choose \"Not applicable\" if your unit has no sticks. / H·V·Cube 기기만 해당합니다. 스틱이 없으면 \"해당 없음\"을 고르십시오."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+        - "Not applicable — no sticks / 해당 없음 (스틱 없음)"
+    validations:
+      required: false
+  - type: dropdown
+    id: result-hdmi
+    attributes:
+      label: "HDMI / HDMI"
+      description: "Only if you actually tested it. / 실제로 시험한 경우에만 답해 주십시오."
+      options:
+        - "Pass / 통과"
+        - "Fail / 실패"
+        - "Not tested / 미확인"
+    validations:
+      required: false
+  - type: textarea
+    id: coverage
+    attributes:
+      label: "Games, cores and platforms tested / 시험한 게임·코어·플랫폼"
+      description: "Which platforms, which cores, roughly how many games and how long each ran, and whether anything was noticeably slow. / 어떤 플랫폼과 코어를, 대략 몇 개의 게임을, 얼마나 오래 실행했는지와 눈에 띄게 느린 부분이 있었는지 적어 주십시오."
+    validations:
+      required: false
+  - type: textarea
+    id: performance
+    attributes:
+      label: "Performance observations / 성능 관찰"
+      description: "Stutter, audio crackle, slow menu drawing, heat or battery notes — whatever you noticed, in your own words. / 끊김, 소리 깨짐, 느린 화면 그리기, 발열·배터리 등 관찰한 내용을 적어 주십시오."
+    validations:
+      required: false
+  - type: textarea
+    id: failures
+    attributes:
+      label: "Failures and how to reproduce them / 실패한 항목과 재현 방법"
+      description: "For every row you answered \"Fail\", give the exact steps and what happened. Write `none — nothing failed` if every row passed. / \"실패\"라고 답한 행마다 정확한 순서와 나타난 증상을 적어 주십시오. 모두 통과했다면 `none — nothing failed`라고 적어 주십시오."
+      placeholder: |
+        Controls — Fail: after opening the in-game menu ...
+    validations:
+      required: true
+  - type: textarea
+    id: log-excerpt
+    attributes:
+      label: "Smallest relevant diagnostic excerpt / 가장 작은 관련 진단 일부"
+      description: |
+        Only the few lines that matter, from `System/slot2-diag.txt` (on the card, readable in a card
+        reader) and/or `/tmp/frontend.log` (volatile, on the device: it is wiped on the next boot).
+        Do not paste a complete, unreviewed log. Remove usernames, local paths, network details,
+        serials and any secret first, and leave this empty if you cannot redact it. / 문제와 관련된 몇 줄만
+        `System/slot2-diag.txt`(카드, 카드 리더로 읽음)나 `/tmp/frontend.log`(기기, 재부팅 시 사라짐)에서
+        붙여 주십시오. 검토하지 않은 전체 로그는 붙여 넣지 말고, 개인 정보를 지운 뒤 붙여 주십시오. 지울 수
+        없다면 비워 두셔도 됩니다.
+      placeholder: "slot2: ..."
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: "Confirmation / 확인"
+      options:
+        - label: "Tested by me on this physical device; features it does not have were not reported, and untested rows were left unanswered. / 제가 직접 이 실기에서 확인했고, 기기에 없는 기능은 보고하지 않았으며 시험하지 않은 행은 비워 두었습니다."
+          required: true
+        - label: "Sensitive data (usernames, local paths, network details, serials, secrets) is removed from everything I pasted here. / 붙여 넣은 모든 내용에서 사용자 이름·로컬 경로·네트워크 정보·시리얼·비밀을 지웠습니다."
+          required: true
+        - label: "No ROMs, BIOS files, copyrighted game assets or card images are attached. / ROM·BIOS 파일·저작권이 있는 게임 자산·카드 이미지를 첨부하지 않았습니다."
+          required: true

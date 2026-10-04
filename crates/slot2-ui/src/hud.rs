@@ -1,16 +1,19 @@
-//! The two things the shelf says about the machine rather than about the games: how much
-//! charge is left, and what time it is.
+//! What the frontend says about the machine rather than about the games: how much charge is
+//! left and what time it is, in the panel's top corners, and — while the player is winding
+//! time backwards or forwards — one badge at the top centre.
 //!
-//! Pinned to the panel corners, not to the safe area (DESIGN 167). The safe area is where
+//! All of it is pinned to the panel, not to the safe area (DESIGN 167). The safe area is where
 //! the *layout* lives -- the row, the slot, the toast -- because those have to hold together
 //! on three panel shapes. The HUD belongs to the screen instead: on the 720x720 it rides up
 //! into the extended band with the wallpaper, where it is out of the way of the shelf, and
-//! on the 640x480 it lands in the same corner it would have anyway.
+//! on the 640x480 it lands in the same corner it would have anyway. The badge follows the same
+//! rule: centred on the panel, in that band, not on the layout below it.
 //!
-//! Both clusters sit on a plate. A wallpaper is a photograph the player chose, and white ink
+//! Everything sits on a plate. A wallpaper is a photograph the player chose, and white ink
 //! on an unknown photograph is ink that is sometimes not there at all.
 
 use slot2_gfx::{Canvas, Color};
+use slot2_i18n::Arg;
 use slot2_platform::{clock, Battery, Charge};
 
 use crate::art::ArtCache;
@@ -86,6 +89,17 @@ pub const LOW_INK: Color = Color::from_rgb8(0xE5, 0x6B, 0x4A);
 const PLATE: Color = Color::from_rgb8(0x1E, 0x21, 0x26);
 const PLATE_ALPHA: f32 = 0.55;
 
+/// What the time controls are doing, for the badge at the top of the panel.
+///
+/// Two things and no more: winding backwards, or running forwards faster than real time. The
+/// speed travels with the fast forward so the badge can say `4×` without knowing what the App
+/// decided it is, and so a second speed needs no new variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeControl {
+    Rewind,
+    FastForward { speed: u32 },
+}
+
 /// The corner furniture, and the bolt it keeps rasterised.
 ///
 /// Holds a cache rather than borrowing the shelf cache because the HUD outlives the shelf:
@@ -140,6 +154,51 @@ impl Hud {
             canvas.rect(x, top, w, HUD_H, PLATE.with_alpha(PLATE_ALPHA));
             draw_gauge(canvas, ctx, self, x + PAD_X, band_mid, b);
         }
+    }
+
+    /// Draw the time-control badge, when there is one, at the top centre of the panel.
+    ///
+    /// `None` draws nothing at all, and this draws nothing else: no clock, no battery, no
+    /// clear. The caller owns the frame and decides whether the screen on show permits a
+    /// badge at all.
+    ///
+    /// Panel coordinates, like the corners, and the same band and margin: on the square panel
+    /// the badge belongs in the extended band above the layout, not 120 px down with it. The
+    /// message is measured first — a language decides how wide `되감기` is — and the plate is
+    /// the text plus the padding the corners use.
+    pub fn draw_time_control(
+        &mut self,
+        canvas: &mut dyn Canvas,
+        ctx: &mut UiCtx,
+        safe: &SafeArea,
+        control: Option<TimeControl>,
+    ) {
+        let Some(control) = control else {
+            return;
+        };
+        let text = match control {
+            TimeControl::Rewind => ctx.i18n.t("time-rewind"),
+            TimeControl::FastForward { speed } => ctx
+                .i18n
+                .t_args("time-fast-forward", &[("speed", Arg::from(speed))]),
+        };
+
+        let text_w = face::measure(ctx, &text, PX_TEXT);
+        let w = text_w + 2.0 * PAD_X;
+        let x = (safe.panel_w as f32 - w) / 2.0;
+        let top = HUD_MARGIN;
+        canvas.rect(x, top, w, HUD_H, PLATE.with_alpha(PLATE_ALPHA));
+        // Centred on the band on the face's own height, exactly as the corners are.
+        let f = face::face(canvas, ctx, &text, PX_TEXT);
+        face::draw_text(
+            canvas,
+            ctx,
+            &text,
+            PX_TEXT,
+            x + PAD_X,
+            top + HUD_H / 2.0 - f.h as f32 / 2.0,
+            INK,
+        );
     }
 }
 

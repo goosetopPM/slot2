@@ -10,7 +10,7 @@
 //! need only division; the year needs a civil-from-days conversion that belongs with the
 //! screen that sets it.
 
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Seconds in a day, and the modulus everything here wraps on.
@@ -34,22 +34,61 @@ pub fn utc_now() -> i64 {
         .unwrap_or(0)
 }
 
-/// The offset in force, read from the environment once. Once because it is read every frame
-/// and the environment does not change under a running process, and because reading it per
-/// frame is a syscall's worth of work for a number that is already known.
+/// The offset in force, an atomic read. Per frame without a lock or an environment walk:
+/// the setter writes it and every later read is one relaxed load.
+///
+/// The sentinel stands for "still unset". Reads consult the environment only until initialization,
+/// and publish that value only by replacing the sentinel; a setter that fired
+/// first leaves its value standing. That is the whole reason the fallback is a
+/// compare_exchange on the sentinel and not a store.
+static OFFSET: AtomicI32 = AtomicI32::new(UNSET);
+
+/// Outside OFFSET_MIN..=OFFSET_MAX, so a real offset can never equal it.
+const UNSET: i32 = i32::MIN;
+
 pub fn utc_offset_min() -> i32 {
-    static OFFSET: OnceLock<i32> = OnceLock::new();
-    *OFFSET.get_or_init(|| {
-        std::env::var(OFFSET_ENV)
-            .ok()
-            .and_then(|v| parse_offset_min(&v))
-            .unwrap_or(0)
-    })
+    match OFFSET.load(Ordering::Relaxed) {
+        UNSET => {
+            let env = std::env::var(OFFSET_ENV)
+                .ok()
+                .and_then(|v| parse_offset_min(&v))
+                .unwrap_or(0);
+            match OFFSET.compare_exchange(UNSET, env, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => env,
+                // A setter raced in first; its value is the clock's now.
+                Err(set) => set,
+            }
+        }
+        set => set,
+    }
+}
+
+/// Change the offset at runtime. Rejects anything outside OFFSET_MIN..=OFFSET_MAX and
+/// leaves the current value standing; Err carries the rejected input so the caller can say
+/// why. UTC and the system clock are never touched.
+pub fn set_utc_offset_min(mins: i32) -> Result<(), i32> {
+    if (OFFSET_MIN..=OFFSET_MAX).contains(&mins) {
+        OFFSET.store(mins, Ordering::Relaxed);
+        Ok(())
+    } else {
+        Err(mins)
+    }
 }
 
 /// What the HUD shows: seconds since the epoch, shifted into local time.
 pub fn now_local() -> i64 {
     utc_now() + i64::from(utc_offset_min()) * 60
+}
+
+/// The one pure decision the HUD makes per frame: whether the clock is worth showing, judged
+/// on the raw UTC sample, and only then the local rendering of that same sample. Judging
+/// after the shift would let an offset move a sample across SET_AFTER and flicker the
+/// corner; +14 or -12, the same UTC second gets the same answer.
+pub fn hud_local(utc_secs: i64, offset_min: i32) -> Option<i64> {
+    if !is_set(utc_secs) {
+        return None;
+    }
+    utc_secs.checked_add(i64::from(offset_min) * 60)
 }
 
 /// The environment's grammar: whole minutes, within a day of UTC. `None` for anything else,

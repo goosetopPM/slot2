@@ -1,0 +1,22 @@
+<!--
+  The moulding on a Master System cartridge's face: a short groove across the top face above the
+  label well, a rail down each side of it, and the grip and connector ridges below it. Drawn for
+  SLOT2 in 2026 as a geometric redraw — no manufacturer drawing or external asset was copied, and
+  there is no text or logo here.
+
+  White on transparency, and the alpha is the shape: `ShelfView` rasterises this file into the
+  same coverage mask as the shell and draws it over the shell at 0.8x the shell's colour, so a
+  single channel is the whole drawing.
+
+  Nothing here crosses the label rect (24, 32, 152x118): the top groove is above it, the side
+  rails are outside it, and the rest is below it. Same 200x230 grid as `sms_cart.svg`.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 230">
+  <g fill="#fff">
+    <rect x="34" y="22" width="132" height="5" rx="2.5"/>
+    <rect x="14" y="60" width="6" height="90" rx="3"/>
+    <rect x="180" y="60" width="6" height="90" rx="3"/>
+    <rect x="30" y="168" width="140" height="7" rx="3.5"/>
+    <rect x="44" y="192" width="112" height="6" rx="3"/>
+  </g>
+</svg>

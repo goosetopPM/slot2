@@ -4,6 +4,8 @@
 //! geometry the canvas was made with. Floats, so animation can sit between pixels; the GL
 //! canvas does not snap them.
 
+use crate::shader::ShaderEffect;
+
 /// A texture handle. Only meaningful for the canvas that returned it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TexId(pub u32);
@@ -123,6 +125,46 @@ pub trait Canvas {
     /// Part of a texture: `uv` is `[u0, v0, u1, v1]` in 0..=1, `(0, 0)` the top-left texel.
     #[allow(clippy::too_many_arguments)]
     fn image_uv(&mut self, tex: TexId, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], tint: Color);
+
+    /// Part of a texture through one of the built-in shader effects ([`ShaderEffect`]).
+    ///
+    /// This is the one draw a game picture takes; everything else — rects, text masks, the
+    /// HUD over the picture, the final present — stays on the ordinary path, so an effect
+    /// cannot distort a menu or a letterbox bar.
+    ///
+    /// A canvas that cannot run effects draws the same geometry, UV and tint the ordinary
+    /// way. That is what "no effect" means anyway, so a caller never has to ask whether the
+    /// effect is there.
+    #[allow(clippy::too_many_arguments)]
+    fn image_effect_uv(
+        &mut self,
+        tex: TexId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uv: [f32; 4],
+        tint: Color,
+        effect: ShaderEffect,
+    ) {
+        let _ = effect;
+        self.image_uv(tex, x, y, w, h, uv, tint);
+    }
+
+    /// [`Canvas::image_effect_uv`] over the whole texture.
+    #[allow(clippy::too_many_arguments)]
+    fn image_effect(
+        &mut self,
+        tex: TexId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        tint: Color,
+        effect: ShaderEffect,
+    ) {
+        self.image_effect_uv(tex, x, y, w, h, [0.0, 0.0, 1.0, 1.0], tint, effect);
+    }
 }
 
 /// One recorded call. Textures are numbered from 1 in upload order.
@@ -160,6 +202,17 @@ pub enum Op {
         h: f32,
         uv: [f32; 4],
         tint: Color,
+    },
+    /// A textured quad drawn through a shader effect: same fields as `Image` plus which one.
+    ImageEffect {
+        tex: TexId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uv: [f32; 4],
+        tint: Color,
+        effect: ShaderEffect,
     },
 }
 
@@ -265,6 +318,32 @@ impl Canvas for RecordingCanvas {
             h,
             uv,
             tint,
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn image_effect_uv(
+        &mut self,
+        tex: TexId,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uv: [f32; 4],
+        tint: Color,
+        effect: ShaderEffect,
+    ) {
+        // Recorded as its own op rather than as an `Image`: draw tests have to be able to tell
+        // an effect draw from a plain one, and the origin applies the same way to both.
+        self.ops.push(Op::ImageEffect {
+            tex,
+            x: x + self.origin.0,
+            y: y + self.origin.1,
+            w,
+            h,
+            uv,
+            tint,
+            effect,
         });
     }
 }

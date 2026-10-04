@@ -109,3 +109,167 @@ fn a_ridiculous_rate_is_not_a_panic() {
         }
     }
 }
+
+// --- the styled playback the platform profiles ask for --------------------------------
+
+/// The speeds the production table spans, wide end to wide end: the slowest cart in the
+/// slowest slot and the fastest connector, plus the neutral one. The audio crate never sees
+/// the table itself, so what it is held to here is the range the table lives in.
+const SPEEDS: [f32; 5] = [0.80, 0.82, 1.00, 1.19, 1.20];
+
+fn peak(samples: &[i16]) -> u16 {
+    samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0)
+}
+
+#[test]
+fn the_hard_numbers_of_the_recording_did_not_move() {
+    // The lead is where the contacts are, and the picture is kept with the sound by starting
+    // the clip that much early. If these move, every shelf's contacts move with them.
+    assert_eq!(Sfx::Insert.lead(), 0.097);
+    assert_eq!(Sfx::Eject.lead(), 0.021);
+    assert!((Sfx::Insert.seconds() - 0.240).abs() < 1e-6);
+    assert!((Sfx::Eject.seconds() - 0.315).abs() < 1e-6);
+    assert_eq!(Sfx::Insert.seconds_at_speed(1.0), Sfx::Insert.seconds());
+    assert_eq!(Sfx::Insert.lead_at_speed(1.0), Sfx::Insert.lead());
+    assert_eq!(Sfx::Insert.tail_at_speed(1.0), Sfx::Insert.tail());
+}
+
+#[test]
+fn the_unstyled_render_is_a_styled_one_that_changes_nothing() {
+    // The recording is what every caller from before this task means by `render`, and the
+    // styled path is the same code with a speed of one and a gain of one.
+    for c in CLIPS {
+        for rate in [22_050u32, 44_100, 48_000, 96_000, 192_000] {
+            assert_eq!(
+                c.render(rate),
+                c.render_styled(rate, 1.0, 1.0),
+                "{c:?} at {rate}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_styled_clip_lasts_what_its_speed_says() {
+    // The samples and the cue are derived from the same effective speed, so a clip rendered at
+    // a rate takes the time `seconds_at_speed` claims it does. This is what keeps the contacts
+    // on the frame the cart seats on a shelf that plays the clip at any speed at all.
+    for c in CLIPS {
+        for rate in [22_050u32, 48_000, 96_000] {
+            for speed in SPEEDS {
+                let frames = c.render_styled(rate, speed, 1.0).len() / 2;
+                let played = frames as f32 / rate as f32;
+                assert!(
+                    (played - c.seconds_at_speed(speed)).abs() < 0.002,
+                    "{c:?} at {rate} and {speed}x plays {played}s, not {}s",
+                    c.seconds_at_speed(speed)
+                );
+            }
+        }
+        // And the cue's own arithmetic stays a partition of the clip, which is what the seat
+        // is measured against.
+        for speed in SPEEDS {
+            let lead = c.lead_at_speed(speed);
+            let tail = c.tail_at_speed(speed);
+            let whole = c.seconds_at_speed(speed);
+            assert!(
+                (lead + tail - whole).abs() < 1e-5,
+                "{c:?} at {speed}x: {lead} + {tail} is not {whole}"
+            );
+            assert!(lead > 0.0 && tail > 0.0, "{c:?} at {speed}x");
+        }
+    }
+}
+
+#[test]
+fn faster_is_shorter_and_slower_is_longer() {
+    for c in CLIPS {
+        let slow = c.render_styled(48_000, 0.82, 1.0).len();
+        let plain = c.render_styled(48_000, 1.00, 1.0).len();
+        let fast = c.render_styled(48_000, 1.19, 1.0).len();
+        assert!(
+            slow > plain,
+            "{c:?}: 0.82x is not longer than the recording"
+        );
+        assert!(
+            fast < plain,
+            "{c:?}: 1.19x is not shorter than the recording"
+        );
+    }
+}
+
+#[test]
+fn a_styled_clip_is_no_louder_than_the_recording_and_the_same_in_both_ears() {
+    // A gain above one would clip the recording, and the table never asks for one. A gain below
+    // one has to actually change the amplitude, or the profiles would only differ in speed.
+    for c in CLIPS {
+        for speed in SPEEDS {
+            let plain = c.render_styled(48_000, speed, 1.0);
+            let quiet = c.render_styled(48_000, speed, 0.78);
+            assert!(
+                peak(&quiet) <= peak(&plain),
+                "{c:?} at {speed}x: 0.78 gain peaks at {} against {}",
+                peak(&quiet),
+                peak(&plain)
+            );
+            assert!(peak(&quiet) > 1_000, "{c:?} at {speed}x came out silent");
+            assert_eq!(quiet.len() % 2, 0, "{c:?} at {speed}x: odd sample count");
+            for pair in quiet.as_chunks::<2>().0 {
+                assert_eq!(
+                    pair[0], pair[1],
+                    "{c:?} at {speed}x: a frame differs between the ears"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_speed_or_gain_off_the_table_is_refused() {
+    // A value out of range is a table that has gone wrong. The answer is silence and a cue of
+    // zero rather than a clamped value nobody can trace back to its table entry.
+    for c in CLIPS {
+        for speed in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            0.0,
+            0.79,
+            1.21,
+            -1.0,
+        ] {
+            assert!(
+                c.render_styled(48_000, speed, 1.0).is_empty(),
+                "{c:?} played at {speed}x"
+            );
+            assert_eq!(c.lead_at_speed(speed), 0.0, "{c:?} at {speed}x");
+            assert_eq!(c.seconds_at_speed(speed), 0.0, "{c:?} at {speed}x");
+            assert_eq!(c.tail_at_speed(speed), 0.0, "{c:?} at {speed}x");
+        }
+        for gain in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.01, 1.01, 2.0] {
+            assert!(
+                c.render_styled(48_000, 1.0, gain).is_empty(),
+                "{c:?} at gain {gain}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_rate_no_sink_could_report_is_empty_not_a_hang() {
+    // Below one and above the widest rate a sink could plausibly open at, there is no clip to
+    // render: the old contract here was "does not panic", which quietly meant an hour of
+    // interpolation at `u32::MAX`. Silence is the honest answer, and it costs nothing.
+    for c in CLIPS {
+        for rate in [0u32, 400_000, u32::MAX] {
+            assert!(c.render(rate).is_empty(), "{c:?} rendered at {rate} Hz");
+            assert!(
+                c.render_styled(rate, 1.0, 1.0).is_empty(),
+                "{c:?} at {rate}"
+            );
+        }
+        // One frame per clip at 1 Hz: a finite, well-formed return rather than a special case.
+        let one = c.render(1);
+        assert!(!one.is_empty() && one.len() % 2 == 0, "{c:?} at 1 Hz");
+    }
+}

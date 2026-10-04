@@ -13,6 +13,10 @@
 //!   integer-scaled and letterboxed in a resizable host window. [`RecordingCanvas`] is the
 //!   same interface with no GL, for tests of the code that draws.
 //!
+//! - The one draw that may wear a [`ShaderEffect`] is a game picture
+//!   ([`Canvas::image_effect_uv`]). UI, text, overlays and the final present stay on the
+//!   default program, so a shader cannot distort a menu or a letterbox bar.
+//!
 //! Shaders are GLSL ES 1.00 (`attribute`/`varying`/`gl_FragColor`) with the precision line
 //! behind `#ifdef GL_ES`, so one source compiles on the Mali's GLES2 and on a desktop GL
 //! context alike.
@@ -22,11 +26,13 @@
 mod canvas;
 mod fit;
 mod glfn;
+mod shader;
 
 pub use canvas::{Canvas, Color, Op, RecordingCanvas, TexId};
 pub use fit::{
     cover_uv, cropped_size, fit_rect, integer_fit_rect, place, sub_uv, Rect, ScalePolicy,
 };
+pub use shader::ShaderEffect;
 
 mod gl_canvas;
 pub use gl_canvas::GlCanvas;
