@@ -837,12 +837,15 @@ fn a_core_that_cannot_run_the_console_falls_back_to_the_platforms_own() {
     // A library this crate does not know is still opened, exactly as before: the card is
     // allowed to hold a core nobody here has heard of. It is the same mGBA binary under a name
     // the registry does not list, which is what an unknown core looks like from the outside.
+    // Both names come from the host's own contract: the real one from the registry, the unknown
+    // one from the platform's DLL extension, so the copy finds its source on every OS.
     let alt = std::env::temp_dir().join(format!("slot2-unknown-core-{}", std::process::id()));
     let _ = fs::remove_dir_all(&alt);
     fs::create_dir_all(&alt).unwrap();
+    let unknown = format!("mystery_libretro.{}", std::env::consts::DLL_EXTENSION);
     fs::copy(
-        cores.join("mgba_libretro.dll"),
-        alt.join("mystery_libretro.dll"),
+        cores.join(slot2_retro::CoreId::Mgba.file_name()),
+        alt.join(&unknown),
     )
     .unwrap();
     card.write_settings(

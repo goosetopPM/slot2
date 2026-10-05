@@ -2,6 +2,17 @@
 
 ## 현재 상태 (2026-10-05)
 
+- 사용자 승인으로 Task115와 새 repository metadata를 커밋 `5552aab`로 `goosetopPM/slot2`의 `main`에
+  푸시했다. hosted run `37257904339`은 Task115의 두 `core_picker_app` 실패, ALSA prerequisite,
+  host/device clippy를 통과했지만 `session` 43개 중 1개가 실패해 `device`가 다시 skipped됐다. 실패한
+  unknown-core fixture가 mGBA 원본과 복사 대상을 모두 `.dll`로 하드코딩해 Linux의 `.so` 원본을 찾지
+  못한 테스트 이식성 결함이다.
+- Task116 누적 1/2 완료, Codex 최종 검토 통과. `session` unknown-core fixture의 실제 source는
+  `CoreId::Mgba.file_name()`으로, destination은 표준 platform DLL extension으로 바꿨다. 두 semantic half를
+  유지한 채 집중 session 테스트 43 passed/0 failed, 집중 clippy, fmt, 구조·diff 검증이 통과했다. 최종
+  판정은 `tasks/116-linux-session-unknown-core-fixture.result.md`다. 다음은 사용자 승인 commit/push와 새
+  hosted `check`/`device` 판정이다. 성공 뒤 같은 revision을 재실행해 host/device core-cache hit와 artifact를
+  확인하기 전까지 repository는 private로 유지한다.
 - 사용자 승인으로 Task114 6개 파일을 커밋 `2941b07`로 `main`에 푸시했다. hosted run
   `37256229710`은 Task114의 ALSA 설치와 host/device clippy를 통과했지만 workspace test에서
   `core_picker_app` 14개 중 2개가 실패해 `device`가 skipped됐다. 두 실패는 integration fixture가 외부
