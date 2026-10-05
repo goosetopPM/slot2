@@ -2,6 +2,48 @@
 
 ## 현재 상태 (2026-10-05)
 
+- Task120 누적 2/2 완료, Codex 최종 검토 통과. 한국어 RG SP 실기 체크리스트는 155개 고유 실행 행을
+  모두 `NOT RUN`으로 유지하고 fresh-card 필수와 migration 선택 경로, 증거·결함·사용자 서명 양식을
+  갖췄다. 2차에서 `VERSION.txt`(version+short commit)와 About(version+target)의 identity 비교를 바로잡고,
+  migration 백업을 조건부 필수로 만들었으며, 30~60초 lid 재개와 선택 3분 종료를 분리하고 Volume+A mute를
+  확정했다. 155/155 행의 5열 구조·고유 ID·`NOT RUN`, UTF-8 no-BOM/LF, 전체 diff check가 통과했다.
+  최종 판정은 `tasks/120-rgsp-hardware-acceptance-plan.result.md`, 실행 문서는
+  `tasks/120-rgsp-hardware-acceptance-checklist.ko.md`다. 실기 결과는 아직 전부 미실행이다. 다음은 사용자가
+  명시 승인하면 Task117~120과 이 최종 판정까지 commit/push하고 exact SHA의 hosted CI device artifact를
+  확보하는 단계다. 그 전에는 체크리스트를 실행하지 않으며 tag/release는 계속 금지한다. 최종 판정 직후
+  Codex 사용률은 5시간 28%, 주간 32%다(다른 창 사용이 섞일 수 있는 상한).
+- Task119 누적 1/2 완료, Codex 최종 검토 통과. 새 host-only opt-in real-GL test 하나가 720x480에서
+  in-game 및 display children, core/device, state switcher, shelf settings children, power, error toast의
+  15 scenarios x en/ko = 30 PNG와 local static index를 생성한다. 실제 component/font/i18n 경로를 쓰며
+  synthetic data만 사용한다. Codex가 30장을 전부 확인했고 clipping, overlap, selection contrast,
+  unavailable-row 표시, toast 가독성 문제는 없었다. workspace 979 passed/0 failed, clippy warning 0,
+  diff check가 통과했다. 최종 판정은 `tasks/119-host-ui-visual-gallery.result.md`, gallery index는
+  ignored `target/ui-gallery-task119/index.html`이다. 계획한 host menu/dialog visual scope는 닫혔다.
+  다음은 user hardware acceptance 준비이며, 태그와 release는 여전히 금지한다. 실기에 접근하지 않고 사용자가
+  나중에 RG SP에서 실행할 한국어 체크리스트와 증거 양식을 만드는 Task120 지시서를 작성했다. 체크리스트는
+  Task117~119 변경을 먼저 commit/push한 뒤 그 exact SHA의 성공한 hosted CI device artifact를 확보해야 시작할
+  수 있게 하고, fresh-card 검증과 기존 카드 migration을 분리한다. 전달 직전 Codex 사용률은 5시간 20%,
+  주간 31%다(다른 창 사용이 섞일 수 있는 상한). 다음 정확한 전달 문구:
+  `Read and execute C:\SLOT2\tasks\120-rgsp-hardware-acceptance-plan.md exactly. Treat it as the complete contract. Work directly without delegation. This is cumulative attempt 1/2. Do not run builds or tests, commit, stage, push, tag, publish, use the network, access hardware, Raspberry Pi, a card, adb or Samba, install software, or change shared configuration. Before stopping, write C:\SLOT2\tasks\120-rgsp-hardware-acceptance-plan.worker-result.md.`
+- Task118 누적 1/2 완료, Codex 최종 검토 통과. ShelfView는 실제 row placement에서 hint/cart 충돌을
+  계산해 필요한 경우에만 안정 상태 hint를 cart 위로 옮기고, insert/eject의 positive travel에서는
+  pre-action hint를 숨긴다. 720x720 GB 안정/seat-zero 화면에서 `A play`가 cart 위에 보이고 0.5/0.8/1.0
+  이동 화면에는 재등장하지 않음을 새 PNG로 확인했다. focused tests, workspace 978 passed/0 failed,
+  clippy warning 0, device dist `==> done`, diff check가 통과했다. 최종 판정은
+  `tasks/118-square-panel-shelf-hint-visibility.result.md`다. 다음은 in-game menu와 child menus, state
+  switcher, shelf settings/dialogs, disabled rows, toast/error의 host visual evidence를 만드는 Task119
+  지시서를 작성했다. 다음 정확한 전달 문구:
+  `Read and execute C:\SLOT2\tasks\119-host-ui-visual-gallery.md exactly. Treat it as the complete contract. Work directly without delegation. This is cumulative attempt 1/2. Do not modify production code or existing tests. Do not commit, stage, push, tag, publish, use the network, access hardware or a card, install software, or change shared configuration. Before stopping, write C:\SLOT2\tasks\119-host-ui-visual-gallery.worker-result.md.`
+  release와 실기 acceptance는 계속 보류한다.
+- GitHub 저장소 `goosetopPM/slot2`는 public 전환됐고, 검증된 `main` HEAD는 `8662c6e`다. 사용자는 UI와
+  실기 검증이 끝나기 전에는 태그나 릴리스를 만들지 않기로 했다. Task117 host UI audit는 3개 real-GL
+  명령과 17개 PNG 재생성·구조 검사를 통과했지만 Codex 시각 검토에서 720x720 GB 선반의 안정 상태
+  `A play` hint가 tall cart 뒤에 가려지고 삽입 말기에 다시 나타나는 결함을 확인했다. Task117 audit 자체는
+  1/2 통과지만 3-geometry UI acceptance는 열려 있다. 최종 판정은
+  `tasks/117-host-ui-acceptance-audit.result.md`다. 다음은 이 hint occlusion 회귀를 고치고 현재 PNG가
+  다루지 않는 menu/dialog host visual evidence보다 먼저 hint 결함만 고치는 Task118 지시서를 작성했다.
+  다음 정확한 전달 문구:
+  `Read and execute C:\SLOT2\tasks\118-square-panel-shelf-hint-visibility.md exactly. Treat it as the complete contract. Work directly without delegation. This is cumulative attempt 1/2. Do not commit, stage, push, tag, publish, use the network, access hardware or a card, install software, or change shared configuration. Before stopping, write C:\SLOT2\tasks\118-square-panel-shelf-hint-visibility.worker-result.md.`
 - 사용자 승인으로 Task115와 새 repository metadata를 커밋 `5552aab`로 `goosetopPM/slot2`의 `main`에
   푸시했다. hosted run `37257904339`은 Task115의 두 `core_picker_app` 실패, ALSA prerequisite,
   host/device clippy를 통과했지만 `session` 43개 중 1개가 실패해 `device`가 다시 skipped됐다. 실패한

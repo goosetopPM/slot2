@@ -33,7 +33,31 @@ const PLATFORMS: [Platform; 7] = [
 const STEPS: usize = 44; // 0.73 s at 60 Hz
 
 fn ctx() -> UiCtx {
-    UiCtx::new(detect().profile, "en", Vec::new(), None)
+    ctx_lang("en")
+}
+
+fn ctx_lang(lang: &str) -> UiCtx {
+    UiCtx::new(detect().profile, lang, Vec::new(), None)
+}
+
+/// What the hint line painted: the words and the cap labels. They are the only things on the
+/// shelf written in the dim ink, and the line is one row of them.
+fn hint_rects(canvas: &RecordingCanvas) -> Vec<(f32, f32, f32, f32)> {
+    let ink = slot2_ui::splash::INK_DIM;
+    let cap = ink.with_alpha(0.25);
+    canvas
+        .frame()
+        .iter()
+        .filter_map(|o| match o {
+            Op::Image {
+                x, y, w, h, tint, ..
+            } if *tint == ink => Some((*x, *y, *w, *h)),
+            Op::Rect {
+                x, y, w, h, color, ..
+            } if *color == cap => Some((*x, *y, *w, *h)),
+            _ => None,
+        })
+        .collect()
 }
 
 fn images(canvas: &RecordingCanvas) -> Vec<(f32, f32, f32, f32, f32)> {
@@ -1042,6 +1066,93 @@ fn the_port_trim_stays_on_the_panel_on_every_geometry() {
                     x + w,
                     safe.panel_w
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_resting_insert_frame_keeps_the_hint_where_the_shelf_had_it() {
+    // seat 0.0 is the frame the button was pressed on. The row has not moved on it, and the
+    // line under the row may not move either or every launch starts with a flicker.
+    let t = ["A", "B", "C"];
+    let mut v = ShelfView::default();
+    v.shelf.set_len(3);
+    for g in GEOMETRIES {
+        let safe = SafeArea::for_geometry(g);
+        for p in PLATFORMS {
+            for lang in ["en", "ko"] {
+                let mut c = ctx_lang(lang);
+
+                let mut a = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+                v.draw(&mut a, &mut c, &safe, p, &t);
+                let mut b = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+                v.draw_insert(
+                    &mut b,
+                    &mut c,
+                    &safe,
+                    p,
+                    &t,
+                    Insertion {
+                        seat: 0.0,
+                        motion: Motion::Insert,
+                    },
+                );
+
+                let want = hint_rects(&a);
+                let got = hint_rects(&b);
+                assert!(
+                    !want.is_empty(),
+                    "{g:?} {p:?}/{lang}: the shelf drew no hint at all"
+                );
+                assert_eq!(
+                    want.len(),
+                    got.len(),
+                    "{g:?} {p:?}/{lang}: {want:?} against {got:?}"
+                );
+                for (x, y) in want.iter().zip(got.iter()) {
+                    for (a, b) in [(x.0, y.0), (x.1, y.1), (x.2, y.2), (x.3, y.3)] {
+                        assert!(
+                            (a - b).abs() < 0.5,
+                            "{g:?} {p:?}/{lang}: the first insert frame moved the hint: \
+                             {want:?} against {got:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_cart_in_travel_draws_no_hint_on_any_geometry() {
+    // The line describes an action nobody has taken yet. Once the cart is moving the action
+    // has been accepted, and the tallest cartridge would either stand across the line or
+    // flash it back on its way past where the line used to be.
+    let t = ["A", "B", "C"];
+    let first_frame = 1.0 / STEPS as f32;
+    let mut v = ShelfView::default();
+    v.shelf.set_len(3);
+    let mut c = ctx();
+    for g in GEOMETRIES {
+        let safe = SafeArea::for_geometry(g);
+        for p in PLATFORMS {
+            for motion in [Motion::Insert, Motion::Eject] {
+                for seat in [first_frame, 0.5, 0.8, 1.0] {
+                    let mut canvas = RecordingCanvas::new(safe.panel_w, safe.panel_h);
+                    v.draw_insert(
+                        &mut canvas,
+                        &mut c,
+                        &safe,
+                        p,
+                        &t,
+                        Insertion { seat, motion },
+                    );
+                    assert!(
+                        hint_rects(&canvas).is_empty(),
+                        "{g:?} {p:?} {motion:?} seat {seat}: the hint is still drawn"
+                    );
+                }
             }
         }
     }

@@ -80,12 +80,19 @@ impl ShelfView {
         // 1. Back: the bay and the opening.
         self.draw_back(canvas, mouth_x, mouth_w, band_y);
 
-        // 2. What A does, under the row and above the slot — painted before the carts so the
-        // travelling one passes in front of it rather than behind.
-        self.draw_hint(canvas, ctx, safe);
-
-        // 3. Parted row.
+        // 2. Where the row stands this frame. Measured before anything is drawn, because the
+        // line under it is placed clear of the carts and only the row knows how tall they are.
         let placements = self.shelf.parted(safe, skin.cart_size, seat);
+
+        // 3. What A does — but only on the frame the button was pressed on. The line
+        // describes an action nobody has taken yet; once the cart is travelling the action
+        // has been accepted, and a tall cartridge would either stand across the line or
+        // flash it back on its way past where the line used to be.
+        if seat == 0.0 {
+            self.draw_hint(canvas, ctx, safe, &placements);
+        }
+
+        // 4. Parted row.
         let (shell_tex, detail_tex) = self.prepare_textures(canvas, skin);
         self.draw_placements(
             canvas,
@@ -97,7 +104,7 @@ impl ShelfView {
             detail_tex,
         );
 
-        // 3. The travelling cart. Nothing goes into the slot off an empty shelf — there is
+        // 5. The travelling cart. Nothing goes into the slot off an empty shelf — there is
         // no cartridge to put there, and drawing one anyway conjures a game the card does
         // not have.
         if seat > 0.0 && !self.shelf.is_empty() {
@@ -155,13 +162,16 @@ impl ShelfView {
         // 1. Back: the bay and the opening.
         self.draw_back(canvas, mouth_x, mouth_w, band_y);
 
-        // 2. What A does. The same line `draw` puts there: seat 0.0 is the frame the button
-        // was pressed on, and a hint that appeared only once the cart had moved would be a
-        // flicker at the start of every launch.
-        self.draw_hint(canvas, ctx, safe);
-
-        // 3. The carts.
+        // 2. Where the row stands. Measured before anything is drawn, because the line under
+        // it is placed clear of the carts and only the row knows how tall they are.
         let placements = self.shelf.placements(safe, skin.cart_size);
+
+        // 3. What A does. The same line `draw_insert` puts on its first frame: seat 0.0 is the
+        // frame the button was pressed on, and a hint that appeared only once the cart had
+        // moved would be a flicker at the start of every launch.
+        self.draw_hint(canvas, ctx, safe, &placements);
+
+        // 4. The carts.
         let (shell_tex, detail_tex) = self.prepare_textures(canvas, skin);
         self.draw_placements(
             canvas,
@@ -173,7 +183,7 @@ impl ShelfView {
             detail_tex,
         );
 
-        // 3. Front: the plastic face of the machine, and the trim on it.
+        // 6. Front: the plastic face of the machine, and the trim on it.
         self.draw_front(canvas, panel_w, mouth_x, mouth_w, band_y);
         self.draw_port(canvas, skin, panel_w, band_y);
     }
@@ -182,7 +192,16 @@ impl ShelfView {
     ///
     /// Nothing on an empty shelf — there is no cart to play — and one line otherwise: A plays,
     /// or A goes back to where the player left off and a hold starts over.
-    fn draw_hint(&self, canvas: &mut dyn Canvas, ctx: &mut UiCtx, safe: &SafeArea) {
+    ///
+    /// `placements` is the row exactly as this frame draws it, because where the line can go
+    /// is a question about the cartridges standing on the shelf rather than about the panel.
+    fn draw_hint(
+        &self,
+        canvas: &mut dyn Canvas,
+        ctx: &mut UiCtx,
+        safe: &SafeArea,
+        placements: &[crate::shelf::Placement],
+    ) {
         if self.shelf.is_empty() {
             return;
         }
@@ -191,12 +210,6 @@ impl ShelfView {
         } else {
             &["hint-play"]
         };
-
-        let line_h = ctx.fonts.measure("", crate::PX_HINT).line_height as f32;
-        // Above the slot, like the toast, and never past the safe area: on the square panel
-        // the machine hangs below the layout and a line pinned to the slot would sit off it.
-        let floor = (safe.panel_h as f32 - MOUTH_H).min(safe.py(crate::SAFE_H as f32));
-        let y = floor - HINT_PAD - line_h;
 
         let widths: Vec<f32> = keys
             .iter()
@@ -207,6 +220,28 @@ impl ShelfView {
             .collect();
         let total = widths.iter().sum::<f32>() + HINT_GAP * (keys.len() - 1) as f32;
         let mut x = safe.centre_x(total);
+
+        let line_h = ctx.fonts.measure("", crate::PX_HINT).line_height as f32;
+        // Above the slot, like the toast, and never past the safe area: on the square panel
+        // the machine hangs below the layout and a line pinned to the slot would sit off it.
+        let floor = (safe.panel_h as f32 - MOUTH_H).min(safe.py(crate::SAFE_H as f32));
+        let mut y = floor - HINT_PAD - line_h;
+
+        // A cartridge standing across that line hides it: the line is centred on the row, and
+        // the selection is the tallest cart there. Which carts reach the line is the row's own
+        // geometry — a shorter one leaves the line exactly where it was, which is why nothing
+        // here tests for a platform name or a panel size. The row's carts all stand on the
+        // same line, so clearing the tallest of the ones the line would cross clears them all.
+        let mut covered = f32::INFINITY;
+        for p in placements {
+            let across = p.x < x + total && p.x + p.w > x;
+            if across && p.y < y + line_h && p.y + p.h > y {
+                covered = covered.min(p.y);
+            }
+        }
+        if covered.is_finite() {
+            y = covered - HINT_PAD - line_h;
+        }
 
         for (key, width) in keys.iter().zip(&widths) {
             let spans = ctx.i18n.spans(key, &[]);
