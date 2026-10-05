@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Ring buffer, resampling, volume, and sinks: ALSA via dlopen on the device, cpal on the host"
 
 [features]

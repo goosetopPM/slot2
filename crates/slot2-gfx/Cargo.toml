@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Surface (fbdev EGL on device, glutin on host), 2D canvas over GL ES 2, letterbox fit, read-back"
 
 [features]
