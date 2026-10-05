@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "slot2-i18n"
 version.workspace = true
 edition.workspace = true

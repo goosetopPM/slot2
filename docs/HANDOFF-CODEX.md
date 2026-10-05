@@ -1,5 +1,21 @@
 # SLOT2 — Codex 인수인계
 
+## 현재 상태 (2026-10-05)
+
+- 사용자가 비공개 GitHub 저장소 `https://github.com/gyuhangcho/slot2`를 만들었고, Codex가 workspace
+  repository metadata를 해당 주소로 바로잡아 커밋 `a9f57e2`로 `main`/`origin/main`에 푸시했다. 로컬과
+  원격 추적 ref는 일치하고 푸시 직후 작업 트리는 clean이었다.
+- 첫 hosted CI run `37254253979`는 `check`의 `clippy (host)`에서 실패했다. Ubuntu runner에
+  `libasound2-dev`가 없어 `slot2 -> slot2-audio -> cpal -> alsa -> alsa-sys` 빌드 중 `alsa.pc`를 찾지
+  못했다. 선행 core build·presence·fmt는 통과했고, `device`는 `check` 의존성 때문에 skipped다.
+  `crates/slot2-i18n/Cargo.toml`의 유일한 UTF-8 BOM도 Rust cache parser 경고를 냈다.
+- Task114 누적 1/2 완료, Codex 최종 검토 통과. `.github/workflows/ci.yml`은 core cache 조건과 분리된
+  무조건 step에서 `libasound2-dev`를 host clippy 전에 설치하고, 유일하게 BOM이 있던
+  `crates/slot2-i18n/Cargo.toml`은 선두 3바이트만 제거했다. 11개 manifest BOM scan, offline metadata,
+  fmt와 diff check가 통과했다. 최종 판정은 `tasks/114-hosted-ci-linux-prerequisites.result.md`다. 다음은
+  사용자가 Task114 변경 묶음의 commit/push를 승인하는 단계다. 새 hosted run에서 `check`와 `device`가
+  모두 통과한 뒤 같은 revision을 한 번 재실행해 core-cache hit와 device artifact를 확인해야 한다.
+
 ## 현재 상태 (2026-10-04)
 
 - Task111 1/1 완료, Codex 최종 검토 통과. staged gate에서 드러난 71개 whitespace finding을 닫았다.

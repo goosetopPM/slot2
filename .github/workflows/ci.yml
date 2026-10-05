@@ -22,6 +22,14 @@ jobs:
           targets: aarch64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
 
+      # cpal's ALSA backend compiles alsa-sys, which needs alsa.pc from libasound2-dev. This
+      # step is unconditional on purpose: `build cores` is skipped once the core cache hits,
+      # so a package installed there would be missing on exactly the run that hits.
+      - name: host audio prerequisites (libasound2-dev)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev
+
       # The core tests skip themselves when vendor/ is empty, which is right for a fresh
       # checkout and wrong for CI: a suite that silently tests nothing is worse than no
       # suite. So build the pinned cores natively for this runner — the same commits and
