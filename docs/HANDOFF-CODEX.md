@@ -2,6 +2,19 @@
 
 ## 현재 상태 (2026-10-05)
 
+- 사용자 승인으로 Task114 6개 파일을 커밋 `2941b07`로 `main`에 푸시했다. hosted run
+  `37256229710`은 Task114의 ALSA 설치와 host/device clippy를 통과했지만 workspace test에서
+  `core_picker_app` 14개 중 2개가 실패해 `device`가 skipped됐다. 두 실패는 integration fixture가 외부
+  코어를 `mystery_libretro.dll`로 하드코딩해 Linux product resolver가 찾는 `mystery_libretro.so`를 만들지
+  않은 하나의 테스트 이식성 결함이다.
+- Task115 누적 1/2 완료, Codex 최종 검토 통과. `core_picker_app`에 표준 라이브러리의 platform DLL
+  extension을 쓰는 external core filename helper 하나를 추가하고 두 Windows 전용 fixture path를 이를
+  사용하도록 바꿨다. 집중 테스트 14 passed/0 failed, 집중 clippy, fmt, 구조·diff 검증이 통과했다. 최종
+  판정은 `tasks/115-linux-core-picker-fixture-portability.result.md`다.
+- 사용자가 GitHub username을 `goosetopPM`으로 변경했고 새 canonical repository URL은
+  `https://github.com/goosetopPM/slot2`다. 루트 Cargo repository metadata를 새 주소로 변경했으며 local
+  `origin`도 같은 주소로 맞춘 뒤 접근성을 확인한다. 다음은 사용자가 Task115 기록과 metadata 변경의
+  commit/push를 승인하는 단계이며, push 뒤 hosted `check`와 `device`를 다시 판정한다.
 - 사용자가 비공개 GitHub 저장소 `https://github.com/gyuhangcho/slot2`를 만들었고, Codex가 workspace
   repository metadata를 해당 주소로 바로잡아 커밋 `a9f57e2`로 `main`/`origin/main`에 푸시했다. 로컬과
   원격 추적 ref는 일치하고 푸시 직후 작업 트리는 clean이었다.

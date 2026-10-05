@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.96"
 license = "MIT"
-repository = "https://github.com/gyuhangcho/slot2"
+repository = "https://github.com/goosetopPM/slot2"
 
 [workspace.dependencies]
 slot2-platform = { path = "crates/slot2-platform" }

@@ -155,6 +155,17 @@ fn nes_rom() -> Vec<u8> {
     rom
 }
 
+/// The external core filename the fixtures write: what product resolution means on this host.
+///
+/// The setting names the core `mystery`, and `session::core_file_name` resolves that to the
+/// `mystery_libretro` base name plus this platform's DLL extension: `dll` on Windows, `dylib`
+/// on macOS, `so` on Linux and the other Unix targets. The extension comes from the standard
+/// library's own DLL extension constant, so the fixture cannot pin a Windows-only suffix that a
+/// Linux runner would then fail to find. No `lib` prefix: SLOT2 core filenames have none.
+fn mystery_external_core() -> String {
+    format!("mystery_libretro.{}", std::env::consts::DLL_EXTENSION)
+}
+
 /// A card whose game runs on a library this frontend does not ship, in a cores directory with
 /// no official core in it at all. What the picker has to offer a session that is already
 /// running, without taking a library away from a core that has it open.
@@ -164,7 +175,7 @@ fn external_fixture(tag: &str, vendor: &Path) -> (Card, Cart, PathBuf) {
     fs::remove_file(cores.join(CoreId::Gpsp.file_name())).unwrap();
     fs::copy(
         vendor.join(CoreId::Mgba.file_name()),
-        cores.join("mystery_libretro.dll"),
+        cores.join(mystery_external_core()),
     )
     .unwrap();
     card.write_settings(
@@ -1100,7 +1111,7 @@ fn a_recovery_that_cannot_open_the_old_core_takes_the_cart_out() {
         "the fixture did not start on the fallback core"
     );
 
-    fs::write(cores.join("mystery_libretro.dll"), b"not a library").unwrap();
+    fs::write(cores.join(mystery_external_core()), b"not a library").unwrap();
     let at = open_core_row(&mut a, now);
     tap(&mut a, Button::Down, at);
     // A is taken without the usual trailing tick: the request the failed switch leaves behind is
