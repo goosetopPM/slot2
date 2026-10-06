@@ -4,6 +4,8 @@ SLOT2 is a cartridge-style frontend for [BaseOS](https://github.com/pvaibhav/Bas
 handhelds. It plays GB, GBC, GBA, NES, SNES, MD and SMS games with in-process libretro cores, on a shelf of
 cartridges. It began from [brandonkowalski/slot](https://github.com/brandonkowalski/slot) (MIT) and was
 rebuilt around it.
+Note on the name: "SLOT2" is named as a homage to the Nintendo DS Slot-2 (GBA slot),
+not to claim it is better or superior to the original slot.
 
 **한국어 문서: [README.ko.md](README.ko.md)**
 
