@@ -5,6 +5,8 @@ SLOT2는 Anbernic H700 계열 휴대기에서 [BaseOS](https://github.com/pvaibh
 실행합니다. [brandonkowalski/slot](https://github.com/brandonkowalski/slot)(MIT)에서 출발해 그 위에 다시
 만든 프로젝트입니다.
 
+**프로젝트 명칭에 대한 안내: "SLOT2" 는 닌텐도 DS Slot-2 (GBA 슬롯)에 대한 오마쥬일 뿐, 이 프로젝트의 기반이 된 slot보다 낫거나 우월하다는 뜻이 절대 아닙니다!.**
+
 **English document: [README.md](README.md)**
 
 ## 1. 개요와 프로젝트 상태
